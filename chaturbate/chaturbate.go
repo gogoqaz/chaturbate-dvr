@@ -17,8 +17,17 @@ import (
 	"github.com/teacat/chaturbate-dvr/server"
 )
 
-// roomDossierRegexp is used to extract the room dossier information from the HTML response.
-var roomDossierRegexp = regexp.MustCompile(`window\.initialRoomDossier = "(.*?)"`)
+// edgeRegionRegexp extracts edge region from URL like "edge14-sin.live.mmcdn.com"
+var edgeRegionRegexp = regexp.MustCompile(`edge\d+-([a-z]+)`)
+
+// edgeRegions is the list of CDN edge regions to try when geo-blocked
+var edgeRegions = []string{"lax", "fra", "ams", "sin", "hnd"}
+
+// APIResponse represents the response from /api/chatvideocontext/ endpoint
+type APIResponse struct {
+	HLSSource  string `json:"hls_source"`
+	RoomStatus string `json:"room_status"`
+}
 
 // Client represents an API client for interacting with Chaturbate.
 type Client struct {
@@ -37,43 +46,71 @@ func (c *Client) GetStream(ctx context.Context, username string) (*Stream, error
 	return FetchStream(ctx, c.Req, username)
 }
 
-// FetchStream retrieves the streaming data from the given username's page.
+// FetchStream retrieves the streaming data using the Chaturbate API.
 func FetchStream(ctx context.Context, client *internal.Req, username string) (*Stream, error) {
-	body, err := client.Get(ctx, fmt.Sprintf("%s%s", server.Config.Domain, username))
+	// Call /api/chatvideocontext/{username}/
+	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, username)
+	body, err := client.Get(ctx, apiURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get page body: %w", err)
+		return nil, fmt.Errorf("failed to get API response: %w", err)
 	}
 
-	// Ensure that the playlist.m3u8 file is present in the response
-	if !strings.Contains(body, "playlist.m3u8") {
+	var resp APIResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+
+	// Handle room status
+	switch resp.RoomStatus {
+	case "private":
+		return nil, internal.ErrPrivateStream
+	case "away", "offline":
 		return nil, internal.ErrChannelOffline
 	}
 
-	return ParseStream(body)
+	if resp.HLSSource == "" {
+		return nil, internal.ErrChannelOffline
+	}
+
+	// Find working edge URL (geo-blocking fallback)
+	workingURL, err := findWorkingEdgeURL(ctx, client, resp.HLSSource)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Stream{HLSSource: workingURL}, nil
 }
 
-// ParseStream extracts the HLS source URL from the given page body.
-func ParseStream(body string) (*Stream, error) {
-	matches := roomDossierRegexp.FindStringSubmatch(body)
-	if len(matches) == 0 {
-		return nil, errors.New("room dossier not found")
+// findWorkingEdgeURL validates the HLS URL and tries alternative edge regions if geo-blocked.
+func findWorkingEdgeURL(ctx context.Context, client *internal.Req, hlsSource string) (string, error) {
+	// 1. Validate original URL
+	statusCode, err := client.Head(ctx, hlsSource)
+	if err == nil && statusCode == 200 {
+		return hlsSource, nil
 	}
 
-	// Decode Unicode escape sequences in the extracted JSON string
-	sourceData, err := strconv.Unquote(strings.Replace(strconv.Quote(matches[1]), `\\u`, `\u`, -1))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode unicode: %w", err)
+	// 2. Extract current region from URL
+	matches := edgeRegionRegexp.FindStringSubmatch(hlsSource)
+	if len(matches) < 2 {
+		// URL doesn't match edge pattern, return original
+		return hlsSource, nil
+	}
+	currentRegion := matches[1]
+
+	// 3. Try alternative edge regions: lax, fra, ams, sin, hnd
+	for _, region := range edgeRegions {
+		if region == currentRegion {
+			continue
+		}
+		altURL := strings.Replace(hlsSource, "-"+currentRegion+".", "-"+region+".", 1)
+
+		statusCode, err := client.Head(ctx, altURL)
+		if err == nil && statusCode == 200 {
+			return altURL, nil
+		}
 	}
 
-	// Unmarshal JSON to extract HLS source URL
-	var room struct {
-		HLSSource string `json:"hls_source"`
-	}
-	if err := json.Unmarshal([]byte(sourceData), &room); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
-	}
-
-	return &Stream{HLSSource: room.HLSSource}, nil
+	return "", internal.ErrGeoBlocked
 }
 
 // Stream represents an HLS stream source.

@@ -83,6 +83,26 @@ func (h *Req) GetBytes(ctx context.Context, url string) ([]byte, error) {
 	return b, err
 }
 
+// Head sends an HTTP HEAD request and returns the status code.
+func (h *Req) Head(ctx context.Context, url string) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	if err != nil {
+		return 0, err
+	}
+	SetRequestHeaders(req)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode, nil
+}
+
 // CreateRequest constructs an HTTP GET request with necessary headers.
 func CreateRequest(ctx context.Context, url string) (*http.Request, context.CancelFunc, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // timed out after 10 seconds

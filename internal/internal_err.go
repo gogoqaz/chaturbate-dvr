@@ -11,4 +11,5 @@ var (
 	ErrPrivateStream     = errors.New("channel went offline or private")
 	ErrPaused            = errors.New("channel paused")
 	ErrStopped           = errors.New("channel stopped")
+	ErrGeoBlocked        = errors.New("stream not accessible (may be geo-blocked)")
 )
