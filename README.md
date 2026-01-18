@@ -99,6 +99,7 @@ Available options:
 --cookies value             Cookies to use in the request (format: key=value; key2=value2)
 --user-agent value          Custom User-Agent for the request
 --domain value              Chaturbate domain to use (default: "https://chaturbate.global/")
+--compress                  Compress .ts to .mkv after recording (auto-enabled if ffmpeg installed)
 --help, -h                  show help
 --version, -v               print the version
 ```
@@ -118,6 +119,9 @@ $ ./chaturbate-dvr -u yamiodymel -max-filesize 1024
 # Custom filename format
 $ ./chaturbate-dvr -u yamiodymel \
     -pattern "video/{{.Username}}/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}_{{.Sequence}}"
+
+# Disable auto-compression
+$ ./chaturbate-dvr -u yamiodymel --compress=false
 ```
 
 _Note: In Web UI mode, these flags serve as default values for new channels._
