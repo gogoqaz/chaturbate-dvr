@@ -33,6 +33,7 @@ type CreateChannelRequest struct {
 	Pattern     string `form:"pattern" binding:"required"`
 	MaxDuration int    `form:"max_duration"`
 	MaxFilesize int    `form:"max_filesize"`
+	Compress    bool   `form:"compress"`
 }
 
 // CreateChannel creates a new channel.
@@ -52,6 +53,7 @@ func CreateChannel(c *gin.Context) {
 			Pattern:     req.Pattern,
 			MaxDuration: req.MaxDuration,
 			MaxFilesize: req.MaxFilesize,
+			Compress:    req.Compress,
 			CreatedAt:   time.Now().Unix(),
 		}, true)
 	}

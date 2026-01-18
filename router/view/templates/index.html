@@ -273,6 +273,19 @@
                             </div>
                         </div>
                         <!-- / Splitting Options -->
+
+                        <!-- Compress Option -->
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">Post-Processing</div>
+                            <div class="content is-padded">
+                                <label class="ts-checkbox">
+                                    <input type="checkbox" name="compress" value="true" {{ if .Config.Compress }}checked{{ end }} />
+                                    Compress to MKV after recording (requires ffmpeg)
+                                </label>
+                                <div class="ts-text is-description has-top-spaced-small">Convert .ts files to .mkv format using stream copy (fast, no quality loss). Original .ts files will be deleted.</div>
+                            </div>
+                        </div>
+                        <!-- / Compress Option -->
                     </div>
 
                     <div class="ts-divider"></div>

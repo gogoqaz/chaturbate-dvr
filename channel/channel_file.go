@@ -48,6 +48,7 @@ func (ch *Channel) Cleanup() error {
 	filename := ch.File.Name()
 
 	defer func() {
+		ch.File = nil // Prevent duplicate cleanup
 		ch.Filesize = 0
 		ch.Duration = 0
 	}()
@@ -70,6 +71,12 @@ func (ch *Channel) Cleanup() error {
 			return fmt.Errorf("remove zero file: %w", err)
 		}
 	}
+
+	// Compress the file if enabled and has content
+	if ch.Config.Compress && fileInfo != nil && fileInfo.Size() > 0 {
+		ch.CompressFile(filename)
+	}
+
 	return nil
 }
 

@@ -22,6 +22,7 @@ type ChannelConfig struct {
 	Pattern     string `json:"pattern"`
 	MaxDuration int    `json:"max_duration"`
 	MaxFilesize int    `json:"max_filesize"`
+	Compress    bool   `json:"compress"`
 	CreatedAt   int64  `json:"created_at"`
 }
 
@@ -58,6 +59,7 @@ type Config struct {
 	Pattern       string
 	MaxDuration   int
 	MaxFilesize   int
+	Compress      bool
 	Port          string
 	Interval      int
 	Cookies       string

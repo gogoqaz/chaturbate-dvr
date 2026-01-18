@@ -100,6 +100,11 @@ func main() {
 				Usage: "Chaturbate domain to use",
 				Value: "https://chaturbate.com/",
 			},
+			&cli.BoolFlag{
+				Name:  "compress",
+				Usage: "Compress .ts files to .mkv using ffmpeg after recording (auto-enabled if ffmpeg is installed)",
+				Value: false,
+			},
 		},
 		Action: start,
 	}
@@ -141,6 +146,7 @@ func start(c *cli.Context) error {
 		Pattern:     c.String("pattern"),
 		MaxDuration: c.Int("max-duration"),
 		MaxFilesize: c.Int("max-filesize"),
+		Compress:    c.Bool("compress"),
 	}, false); err != nil {
 		return fmt.Errorf("create channel: %w", err)
 	}
