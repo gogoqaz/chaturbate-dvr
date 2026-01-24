@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="is-secondary">
+<html lang="en" class="is-dark">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,75 +15,505 @@
         <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
         <link rel="manifest" href="/static/site.webmanifest">
         <title>Chaturbate DVR</title>
+
+        <style>
+            /* ===== CSS Variables - Dark Theme ===== */
+            :root {
+                --bg-primary: #0a0a0a;
+                --bg-secondary: #141414;
+                --bg-tertiary: #1e1e1e;
+                --bg-elevated: #252525;
+                --bg-hover: #2a2a2a;
+
+                --text-primary: #ffffff;
+                --text-secondary: #a0a0a0;
+                --text-muted: #666666;
+
+                --status-recording: #22c55e;
+                --status-recording-glow: rgba(34, 197, 94, 0.4);
+                --status-offline: #6b7280;
+                --status-paused: #ef4444;
+
+                --accent-primary: #6366f1;
+                --accent-hover: #818cf8;
+                --accent-glow: rgba(99, 102, 241, 0.3);
+
+                --border-color: #2a2a2a;
+                --border-subtle: #1f1f1f;
+
+                --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+                --card-shadow-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+            }
+
+            /* ===== Base Styles ===== */
+            html, body {
+                background-color: var(--bg-primary) !important;
+                color: var(--text-primary);
+                font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            }
+
+            /* ===== Header Styles ===== */
+            .app-header {
+                padding: 2rem 0;
+                margin-bottom: 1.5rem;
+                border-bottom: 1px solid var(--border-subtle);
+            }
+
+            .app-title {
+                font-size: 2rem;
+                font-weight: 700;
+                letter-spacing: -0.02em;
+                background: linear-gradient(135deg, #fff 0%, #a0a0a0 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }
+
+            .recording-indicator {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.35rem 0.75rem;
+                background: var(--bg-tertiary);
+                border-radius: 9999px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+            }
+
+            .recording-indicator.is-active {
+                background: rgba(34, 197, 94, 0.15);
+                color: var(--status-recording);
+            }
+
+            .recording-indicator.is-inactive {
+                color: var(--text-muted);
+            }
+
+            .recording-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: var(--status-recording);
+            }
+
+            .recording-indicator.is-active .recording-dot {
+                animation: pulse-dot 2s ease-in-out infinite;
+            }
+
+            @keyframes pulse-dot {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.5; transform: scale(0.8); }
+            }
+
+            .version-badge {
+                font-size: 0.7rem;
+                color: var(--text-muted);
+                padding: 0.25rem 0.5rem;
+                background: var(--bg-tertiary);
+                border-radius: 4px;
+            }
+
+            /* ===== Button Styles ===== */
+            .btn-primary {
+                background: var(--accent-primary) !important;
+                border: none !important;
+                color: white !important;
+                font-weight: 500;
+                transition: all 0.2s ease;
+            }
+
+            .btn-primary:hover {
+                background: var(--accent-hover) !important;
+                box-shadow: 0 0 20px var(--accent-glow);
+                transform: translateY(-1px);
+            }
+
+            .btn-secondary {
+                background: var(--bg-tertiary) !important;
+                border: 1px solid var(--border-color) !important;
+                color: var(--text-primary) !important;
+                transition: all 0.2s ease;
+            }
+
+            .btn-secondary:hover {
+                background: var(--bg-hover) !important;
+                border-color: var(--text-muted) !important;
+            }
+
+            /* ===== Channel Card Styles ===== */
+            .channel-grid {
+                display: flex;
+                flex-direction: column;
+                gap: 1.25rem;
+            }
+
+            .channel-card {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border-color);
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow: var(--card-shadow);
+                transition: all 0.3s ease;
+                display: flex;
+                flex-direction: row;
+            }
+
+            .channel-card:hover {
+                box-shadow: var(--card-shadow-hover);
+                border-color: var(--border-subtle);
+                transform: translateY(-2px);
+            }
+
+            /* Status indicator bar on left */
+            .channel-card::before {
+                content: '';
+                width: 4px;
+                flex-shrink: 0;
+                background: var(--status-offline);
+                transition: background 0.3s ease;
+            }
+
+            .channel-card.is-recording::before {
+                background: var(--status-recording);
+                box-shadow: 0 0 12px var(--status-recording-glow);
+                animation: glow-pulse 2s ease-in-out infinite;
+            }
+
+            .channel-card.is-paused::before {
+                background: var(--status-paused);
+            }
+
+            @keyframes glow-pulse {
+                0%, 100% { box-shadow: 0 0 8px var(--status-recording-glow); }
+                50% { box-shadow: 0 0 16px var(--status-recording-glow); }
+            }
+
+            .channel-info-section {
+                width: 380px;
+                padding: 1.25rem;
+                border-right: 1px solid var(--border-color);
+                flex-shrink: 0;
+            }
+
+            .channel-log-section {
+                flex: 1;
+                padding: 1.25rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.75rem;
+                min-width: 0;
+            }
+
+            /* ===== Log Terminal Styles ===== */
+            .log-terminal {
+                flex: 1;
+                background: var(--bg-primary) !important;
+                border: 1px solid var(--border-color) !important;
+                border-radius: 8px;
+                overflow: hidden;
+            }
+
+            .log-terminal textarea {
+                background: transparent !important;
+                color: var(--text-secondary) !important;
+                font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace !important;
+                font-size: 0.75rem !important;
+                line-height: 1.6 !important;
+                padding: 0.75rem !important;
+                border: none !important;
+                resize: none !important;
+                scrollbar-width: thin;
+                scrollbar-color: var(--bg-elevated) transparent;
+            }
+
+            .log-terminal textarea::-webkit-scrollbar {
+                width: 6px;
+            }
+
+            .log-terminal textarea::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            .log-terminal textarea::-webkit-scrollbar-thumb {
+                background: var(--bg-elevated);
+                border-radius: 3px;
+            }
+
+            .log-controls {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .log-controls .ts-switch {
+                font-size: 0.8rem;
+                color: var(--text-muted);
+            }
+
+            /* ===== Empty State Styles ===== */
+            .empty-state {
+                text-align: center;
+                padding: 4rem 2rem;
+                background: var(--bg-secondary);
+                border: 1px dashed var(--border-color);
+                border-radius: 12px;
+                margin-top: 2rem;
+            }
+
+            .empty-state-icon {
+                font-size: 3.5rem;
+                color: var(--text-muted);
+                margin-bottom: 1.5rem;
+                opacity: 0.5;
+            }
+
+            .empty-state-title {
+                font-size: 1.25rem;
+                font-weight: 600;
+                color: var(--text-primary);
+                margin-bottom: 0.5rem;
+            }
+
+            .empty-state-desc {
+                color: var(--text-muted);
+                margin-bottom: 1.5rem;
+            }
+
+            /* ===== Dialog Styles ===== */
+            .ts-modal {
+                background: rgba(0, 0, 0, 0.8) !important;
+                backdrop-filter: blur(4px);
+            }
+
+            .ts-modal > .content {
+                background: var(--bg-secondary) !important;
+                border: 1px solid var(--border-color) !important;
+                border-radius: 16px !important;
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+                overflow: hidden;
+            }
+
+            .dialog-header {
+                background: var(--bg-tertiary);
+                padding: 1rem 1.5rem;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .dialog-header .ts-header {
+                color: var(--text-primary) !important;
+                font-weight: 600;
+            }
+
+            .dialog-body {
+                padding: 1.5rem;
+                background: var(--bg-secondary);
+            }
+
+            .dialog-footer {
+                background: var(--bg-tertiary);
+                padding: 1rem 1.5rem;
+                border-top: 1px solid var(--border-color);
+            }
+
+            /* ===== Form Styles ===== */
+            .ts-input input,
+            .ts-input textarea,
+            .ts-select select {
+                background: var(--bg-tertiary) !important;
+                border-color: var(--border-color) !important;
+                color: var(--text-primary) !important;
+                transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            }
+
+            .ts-input input:focus,
+            .ts-input textarea:focus,
+            .ts-select select:focus {
+                border-color: var(--accent-primary) !important;
+                box-shadow: 0 0 0 3px var(--accent-glow) !important;
+                outline: none;
+            }
+
+            .ts-input .label {
+                background: var(--bg-elevated) !important;
+                color: var(--text-muted) !important;
+                border-color: var(--border-color) !important;
+            }
+
+            .ts-control .label {
+                color: var(--text-primary) !important;
+                font-weight: 500;
+            }
+
+            .ts-text.is-description {
+                color: var(--text-muted) !important;
+            }
+
+            .ts-text.is-bold {
+                color: var(--text-secondary) !important;
+            }
+
+            .ts-content.is-secondary {
+                background: var(--bg-tertiary) !important;
+            }
+
+            .ts-content.is-padded.is-secondary {
+                background: var(--bg-tertiary) !important;
+                border-radius: 8px;
+            }
+
+            /* ===== Checkbox & Radio Styles ===== */
+            .ts-checkbox,
+            .ts-radio,
+            .ts-switch {
+                color: var(--text-secondary) !important;
+            }
+
+            /* ===== Link Styles ===== */
+            .ts-text.is-link {
+                color: var(--accent-primary) !important;
+            }
+
+            .ts-text.is-link:hover {
+                color: var(--accent-hover) !important;
+            }
+
+            /* ===== Divider Styles ===== */
+            .ts-divider {
+                border-color: var(--border-color) !important;
+            }
+
+            /* ===== Close Button ===== */
+            .ts-close {
+                color: var(--text-muted) !important;
+            }
+
+            .ts-close:hover {
+                color: var(--text-primary) !important;
+            }
+
+            /* ===== Responsive Styles ===== */
+            @media (max-width: 900px) {
+                .channel-card {
+                    flex-direction: column;
+                }
+
+                .channel-card::before {
+                    width: 100%;
+                    height: 4px;
+                }
+
+                .channel-info-section {
+                    width: 100%;
+                    border-right: none;
+                    border-bottom: 1px solid var(--border-color);
+                }
+
+                .channel-log-section {
+                    min-height: 200px;
+                }
+            }
+
+            @media (max-width: 640px) {
+                .app-header {
+                    padding: 1.5rem 0;
+                }
+
+                .app-title {
+                    font-size: 1.5rem;
+                }
+
+                .header-actions {
+                    flex-wrap: wrap;
+                    gap: 0.5rem;
+                }
+
+                .header-actions .ts-button {
+                    flex: 1;
+                    min-width: 120px;
+                }
+            }
+
+            /* ===== Animation Utilities ===== */
+            .fade-in {
+                animation: fadeIn 0.3s ease;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        </style>
     </head>
 
     <body hx-ext="sse">
         <!-- Main Section -->
-        <div class="ts-container has-vertically-padded-big" style="--width: 990px">
+        <div class="ts-container has-vertically-padded-big" style="max-width: 1100px; margin: 0 auto; padding: 0 1rem;">
             <!-- Header -->
-            <div class="ts-grid is-bottom-aligned">
-                <div class="column is-fluid">
-                    <div class="ts-header is-huge is-uppercased is-heavy has-leading-small">Chaturbate DVR</div>
-                    <div class="ts-meta">
-                        <div class="item">
-                            <span id="recording-counter" class="ts-text is-description is-bold"></span>
+            <header class="app-header">
+                <div class="ts-grid is-middle-aligned">
+                    <div class="column is-fluid">
+                        <h1 class="app-title">Chaturbate DVR</h1>
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.75rem;">
+                            <div id="recording-indicator" class="recording-indicator is-inactive">
+                                <span class="recording-dot"></span>
+                                <span id="recording-text">NO RECORDING</span>
+                            </div>
+                            <span class="version-badge">v{{ .Config.Version }}</span>
                         </div>
-                        <div class="item">
-                            <span class="ts-text is-description is-bold">VERSION {{ .Config.Version }}</span>
+                    </div>
+                    <div class="column">
+                        <div class="header-actions" style="display: flex; gap: 0.75rem;">
+                            <button class="ts-button btn-secondary is-start-icon" data-dialog="settings-dialog">
+                                <span class="ts-icon is-gear-icon"></span>
+                                Settings
+                            </button>
+                            <button class="ts-button btn-primary is-start-icon" data-dialog="create-dialog">
+                                <span class="ts-icon is-plus-icon"></span>
+                                Add Channel
+                            </button>
                         </div>
                     </div>
                 </div>
-                <div class="column">
-                    <button class="ts-button is-start-icon is-outlined" data-dialog="settings-dialog">
-                        <span class="ts-icon is-gear-icon"></span>
-                        Settings
-                    </button>
-                </div>
-                <div class="column">
-                    <button class="ts-button is-start-icon" data-dialog="create-dialog">
-                        <span class="ts-icon is-plus-icon"></span>
-                        Add Channel
-                    </button>
-                </div>
-            </div>
+            </header>
             <!-- / Header -->
 
             {{ if not .Channels }}
-            <!-- Blankslate -->
-            <div class="ts-divider has-vertically-spaced-large"></div>
-            <div class="ts-blankslate">
-                <span class="ts-icon is-eye-low-vision-icon"></span>
-                <div class="header">No channels are currently recording</div>
-                <div class="description">Add a new Chaturbate channel to start recording.</div>
-                <div class="action">
-                    <button class="ts-button is-start-icon" data-dialog="create-dialog">
-                        <span class="ts-icon is-plus-icon"></span>
-                        Add Channel
-                    </button>
+            <!-- Empty State -->
+            <div class="empty-state fade-in">
+                <div class="empty-state-icon">
+                    <span class="ts-icon is-video-icon"></span>
                 </div>
+                <div class="empty-state-title">No channels are currently recording</div>
+                <div class="empty-state-desc">Add a Chaturbate channel to start recording streams automatically.</div>
+                <button class="ts-button btn-primary is-start-icon" data-dialog="create-dialog">
+                    <span class="ts-icon is-plus-icon"></span>
+                    Add Channel
+                </button>
             </div>
-            <!-- / Blankslate -->
+            <!-- / Empty State -->
             {{ else }}
 
             <!-- Channels -->
-            <div class="ts-wrap is-vertical has-top-spaced-large" sse-connect="/updates?stream=updates">
+            <div class="channel-grid" sse-connect="/updates?stream=updates">
                 {{ range .Channels }}
-                <div class="ts-box is-horizontal">
-                     <!-- Info Section -->
-                     <div sse-swap="{{ .Username }}-info" class="ts-content is-padded has-break-all" style="width: 400px; line-height: 1.45; padding-right: 0">
+                <div class="channel-card {{ if and .IsOnline (not .IsPaused) }}is-recording{{ else if .IsPaused }}is-paused{{ end }}" data-username="{{ .Username }}">
+                    <!-- Info Section -->
+                    <div sse-swap="{{ .Username }}-info" class="channel-info-section">
                         {{ template "channel_info" . }}
                     </div>
                     <!-- / Info Section -->
 
                     <!-- Log Section -->
-                    <div class="ts-content is-padded" style="flex: 1; gap: 0.8rem; display: flex; flex-direction: column">
-                        <div class="ts-input" style="flex: 1">
-                            <textarea class="has-full-height" readonly sse-swap="{{ .Username }}-log" style="scrollbar-width: thin">{{ range .Logs }}{{ . }}&NewLine;{{ end }}</textarea>
+                    <div class="channel-log-section">
+                        <div class="log-terminal" style="flex: 1; display: flex; flex-direction: column;">
+                            <textarea class="has-full-height" readonly sse-swap="{{ .Username }}-log" style="flex: 1; min-height: 180px;">{{ range .Logs }}{{ . }}&NewLine;{{ end }}</textarea>
                         </div>
-                        <div>
-                            <label class="ts-switch is-small" style="display: flex">
+                        <div class="log-controls">
+                            <label class="ts-switch is-small">
                                 <input type="checkbox" checked />
-                                Auto-Update & Scroll Logs
+                                Auto-scroll logs
                             </label>
                         </div>
                     </div>
@@ -100,28 +530,26 @@
         <dialog id="settings-dialog" class="ts-modal" style="--width: 680px">
             <div class="content">
                 <form action="/update_config" method="POST">
-                    <div class="ts-content is-horizontally-padded is-secondary">
-                        <div class="ts-grid">
+                    <div class="dialog-header">
+                        <div class="ts-grid is-middle-aligned">
                             <div class="column is-fluid">
                                 <div class="ts-header">Settings</div>
                             </div>
                             <div class="column">
-                                <button type="reset" class="ts-close is-rounded is-large is-secondary" data-dialog="settings-dialog"></button>
+                                <button type="reset" class="ts-close is-rounded is-large" data-dialog="settings-dialog"></button>
                             </div>
                         </div>
                     </div>
 
-                    <div class="ts-divider"></div>
-
-                    <div class="ts-content is-vertically-padded">
+                    <div class="dialog-body">
                         <!-- Cookies -->
                         <div class="ts-control is-wide">
                             <div class="label">Cookies</div>
                             <div class="content">
                                 <div class="ts-input">
-                                    <textarea name="cookies" rows="5">{{ .Config.Cookies }}</textarea>
+                                    <textarea name="cookies" rows="4" placeholder="key1=value1; key2=value2">{{ .Config.Cookies }}</textarea>
                                 </div>
-                                <div class="ts-text is-description has-top-spaced-small">Use semicolons to separate multiple cookies, e.g., "key1=value1; key2=value2". See <a class="ts-text is-link" href="https://github.com/teacat/chaturbate-dvr/?tab=readme-ov-file#-cookies--user-agent" target="_blank">README</a> for details.</div>
+                                <div class="ts-text is-description has-top-spaced-small">Use semicolons to separate multiple cookies. See <a class="ts-text is-link" href="https://github.com/teacat/chaturbate-dvr/?tab=readme-ov-file#-cookies--user-agent" target="_blank">README</a> for details.</div>
                             </div>
                         </div>
                         <!-- / Cookies -->
@@ -131,29 +559,27 @@
                             <div class="label">User Agent</div>
                             <div class="content">
                                 <div class="ts-input">
-                                    <textarea name="user_agent" rows="5">{{ .Config.UserAgent }}</textarea>
+                                    <textarea name="user_agent" rows="3" placeholder="Mozilla/5.0 ...">{{ .Config.UserAgent }}</textarea>
                                 </div>
-                                <div class="ts-text is-description has-top-spaced-small">User-Agent can be found using tools like <a class="ts-text is-link" href="https://www.whatismybrowser.com/detect/what-is-my-user-agent/" target="_blank">WhatIsMyBrowser</a>.</div>
+                                <div class="ts-text is-description has-top-spaced-small">User-Agent can be found using <a class="ts-text is-link" href="https://www.whatismybrowser.com/detect/what-is-my-user-agent/" target="_blank">WhatIsMyBrowser</a>.</div>
                             </div>
                         </div>
                         <!-- / User Agent -->
                     </div>
 
-                    <div class="ts-divider"></div>
-
-                    <div class="ts-content is-secondary is-horizontally-padded">
+                    <div class="dialog-footer">
                         <div class="ts-grid is-middle-aligned">
                             <div class="column is-fluid">
-                                <div class="ts-text is-description">
+                                <div class="ts-text is-description" style="font-size: 0.8rem;">
                                     <span class="ts-icon is-triangle-exclamation-icon is-end-spaced"></span>
-                                    Changes will be reverted after the program restarts
+                                    Changes will be reverted after restart
                                 </div>
                             </div>
                             <div class="column">
-                                <button type="reset" class="ts-button is-outlined is-secondary" data-dialog="settings-dialog">Cancel</button>
-                            </div>
-                            <div class="column">
-                                <button type="submit" class="ts-button is-primary">Apply</button>
+                                <div style="display: flex; gap: 0.5rem;">
+                                    <button type="reset" class="ts-button btn-secondary" data-dialog="settings-dialog">Cancel</button>
+                                    <button type="submit" class="ts-button btn-primary">Apply</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -166,70 +592,70 @@
         <dialog id="create-dialog" class="ts-modal" style="--width: 680px">
             <div class="content">
                 <form action="/create_channel" method="POST">
-                    <div class="ts-content is-horizontally-padded is-secondary">
-                        <div class="ts-grid">
+                    <div class="dialog-header">
+                        <div class="ts-grid is-middle-aligned">
                             <div class="column is-fluid">
                                 <div class="ts-header">Add Channel</div>
                             </div>
                             <div class="column">
-                                <button type="reset" class="ts-close is-rounded is-large is-secondary" data-dialog="create-dialog"></button>
+                                <button type="reset" class="ts-close is-rounded is-large" data-dialog="create-dialog"></button>
                             </div>
                         </div>
                     </div>
 
-                    <div class="ts-divider"></div>
-
-                    <div class="ts-content is-vertically-padded">
+                    <div class="dialog-body">
                         <!-- Channel Username -->
                         <div class="ts-control is-wide">
                             <div class="label">Channel Username</div>
                             <div class="content">
                                 <div class="ts-input is-start-labeled">
                                     <div class="label">{{ .Config.Domain }}</div>
-                                    <input type="text" name="username" autofocus required />
+                                    <input type="text" name="username" autofocus required placeholder="username" />
                                 </div>
-                                <div class="ts-text is-description has-top-spaced-small">Use commas to separate multiple channel names, e.g. "channel1, channel2, channel3".</div>
+                                <div class="ts-text is-description has-top-spaced-small">Use commas to separate multiple channels, e.g. "channel1, channel2".</div>
                             </div>
                         </div>
                         <!-- / Channel Username -->
 
-                        <!-- Resolution -->
-                        <div class="ts-control is-wide has-top-spaced-large">
-                            <div class="label">Resolution</div>
-                            <div class="content">
-                                <div class="ts-select">
-                                    <select name="resolution">
-                                        <option value="2160" {{ if eq .Config.Resolution 2160 }}selected{{ end }}>4K</option>
-                                        <option value="1440" {{ if eq .Config.Resolution 1440 }}selected{{ end }}>2K</option>
-                                        <option value="1080" {{ if eq .Config.Resolution 1080 }}selected{{ end }}>1080p</option>
-                                        <option value="720" {{ if eq .Config.Resolution 720 }}selected{{ end }}>720p</option>
-                                        <option value="540" {{ if eq .Config.Resolution 540 }}selected{{ end }}>540p</option>
-                                        <option value="480" {{ if eq .Config.Resolution 480 }}selected{{ end }}>480p</option>
-                                        <option value="240" {{ if eq .Config.Resolution 240 }}selected{{ end }}>240p</option>
-                                    </select>
-                                </div>
-                                <div class="ts-text is-description has-top-spaced-small">The lower resolution will be used if the selected resolution is not available.</div>
-                            </div>
-                        </div>
-                        <!-- / Resolution -->
-
-                        <!-- Framerate -->
-                        <div class="ts-control is-wide has-top-spaced-large">
-                            <div class="label">Framerate</div>
-                            <div class="content is-padded">
-                                <div class="ts-wrap is-compact is-vertical">
-                                    <label class="ts-radio">
-                                        <input type="radio" name="framerate" value="60" {{ if eq .Config.Framerate 60 }}checked{{ end }} />
-                                        60 FPS (or lower)
-                                    </label>
-                                    <label class="ts-radio">
-                                        <input type="radio" name="framerate" value="30" {{ if eq .Config.Framerate 30 }}checked{{ end }} />
-                                        30 FPS
-                                    </label>
+                        <!-- Resolution & Framerate -->
+                        <div class="ts-grid is-2-columns has-top-spaced-large" style="gap: 1.5rem;">
+                            <div class="column">
+                                <div class="ts-control is-wide">
+                                    <div class="label">Resolution</div>
+                                    <div class="content">
+                                        <div class="ts-select is-fluid">
+                                            <select name="resolution">
+                                                <option value="2160" {{ if eq .Config.Resolution 2160 }}selected{{ end }}>4K (2160p)</option>
+                                                <option value="1440" {{ if eq .Config.Resolution 1440 }}selected{{ end }}>2K (1440p)</option>
+                                                <option value="1080" {{ if eq .Config.Resolution 1080 }}selected{{ end }}>1080p</option>
+                                                <option value="720" {{ if eq .Config.Resolution 720 }}selected{{ end }}>720p</option>
+                                                <option value="540" {{ if eq .Config.Resolution 540 }}selected{{ end }}>540p</option>
+                                                <option value="480" {{ if eq .Config.Resolution 480 }}selected{{ end }}>480p</option>
+                                                <option value="240" {{ if eq .Config.Resolution 240 }}selected{{ end }}>240p</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
+                            <div class="column">
+                                <div class="ts-control is-wide">
+                                    <div class="label">Framerate</div>
+                                    <div class="content is-padded" style="padding-top: 0.5rem;">
+                                        <div class="ts-wrap is-compact is-vertical">
+                                            <label class="ts-radio">
+                                                <input type="radio" name="framerate" value="60" {{ if eq .Config.Framerate 60 }}checked{{ end }} />
+                                                60 FPS
+                                            </label>
+                                            <label class="ts-radio">
+                                                <input type="radio" name="framerate" value="30" {{ if eq .Config.Framerate 30 }}checked{{ end }} />
+                                                30 FPS
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <!-- / Framerate -->
+                        <!-- / Resolution & Framerate -->
 
                         <!-- Filename Pattern -->
                         <div class="ts-control is-wide has-top-spaced-large">
@@ -239,7 +665,7 @@
                                     <input type="text" name="pattern" value="{{ .Config.Pattern }}" />
                                 </div>
                                 <div class="ts-text is-description has-top-spaced-small">
-                                    See the <a class="ts-text is-external-link is-link" href="https://github.com/teacat/chaturbate-dvr" target="_blank">README</a> for details.
+                                    See <a class="ts-text is-external-link is-link" href="https://github.com/teacat/chaturbate-dvr" target="_blank">README</a> for pattern variables.
                                 </div>
                             </div>
                         </div>
@@ -248,27 +674,27 @@
                         <div class="ts-divider has-vertically-spaced-large"></div>
 
                         <!-- Splitting Options -->
-                        <div class="ts-control is-wide has-top-spaced">
+                        <div class="ts-control is-wide">
                             <div class="label">Splitting Options</div>
                             <div class="content">
-                                <div class="ts-content is-padded is-secondary">
+                                <div class="ts-content is-padded is-secondary" style="border-radius: 8px;">
                                     <div class="ts-grid is-relaxed is-2-columns">
                                         <div class="column">
-                                            <div class="ts-text is-bold">Max Filesize</div>
+                                            <div class="ts-text is-bold" style="font-size: 0.85rem;">Max Filesize</div>
                                             <div class="ts-input is-end-labeled has-top-spaced-small">
-                                                <input type="number" name="max_filesize" value="{{ .Config.MaxFilesize }}" />
+                                                <input type="number" name="max_filesize" value="{{ .Config.MaxFilesize }}" min="0" />
                                                 <span class="label">MB</span>
                                             </div>
                                         </div>
                                         <div class="column">
-                                            <div class="ts-text is-bold">Max Duration</div>
+                                            <div class="ts-text is-bold" style="font-size: 0.85rem;">Max Duration</div>
                                             <div class="ts-input is-end-labeled has-top-spaced-small">
-                                                <input type="number" name="max_duration" value="{{ .Config.MaxDuration }}" />
+                                                <input type="number" name="max_duration" value="{{ .Config.MaxDuration }}" min="0" />
                                                 <span class="label">Min(s)</span>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="ts-text is-description has-top-spaced">Splitting will be disabled if both options are 0.</div>
+                                    <div class="ts-text is-description has-top-spaced">Set to 0 to disable splitting.</div>
                                 </div>
                             </div>
                         </div>
@@ -280,20 +706,18 @@
                             <div class="content is-padded">
                                 <label class="ts-checkbox">
                                     <input type="checkbox" name="compress" value="true" {{ if .Config.Compress }}checked{{ end }} />
-                                    Compress to MKV after recording (requires ffmpeg)
+                                    Compress to MKV after recording
                                 </label>
-                                <div class="ts-text is-description has-top-spaced-small">Convert .ts files to .mkv format using stream copy (fast, no quality loss). Original .ts files will be deleted.</div>
+                                <div class="ts-text is-description has-top-spaced-small">Requires ffmpeg. Converts .ts to .mkv using stream copy (fast, no quality loss).</div>
                             </div>
                         </div>
                         <!-- / Compress Option -->
                     </div>
 
-                    <div class="ts-divider"></div>
-
-                    <div class="ts-content is-secondary is-horizontally-padded">
-                        <div class="ts-wrap is-end-aligned">
-                            <button type="reset" class="ts-button is-outlined is-secondary" data-dialog="create-dialog">Cancel</button>
-                            <button type="submit" class="ts-button is-primary">Add Channel</button>
+                    <div class="dialog-footer">
+                        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+                            <button type="reset" class="ts-button btn-secondary" data-dialog="create-dialog">Cancel</button>
+                            <button type="submit" class="ts-button btn-primary">Add Channel</button>
                         </div>
                     </div>
                 </form>
@@ -304,56 +728,81 @@
         <script>
             // updateRecordingCount counts recording channels
             function updateRecordingCount() {
-                // Count badges that contain "RECORDING" text (not secondary or negative)
                 let count = 0;
-                document.querySelectorAll('.ts-badge').forEach(badge => {
-                    if (badge.textContent.trim() === 'RECORDING') {
-                        count++;
-                    }
+                document.querySelectorAll('.channel-card.is-recording').forEach(() => {
+                    count++;
                 });
 
-                const counter_el = document.getElementById('recording-counter');
-                 if (count > 0) {
-                    counter_el.textContent = `${count} ${count === 1 ? 'CHANNEL IS' : 'CHANNELS ARE'} RECORDING`;
+                const indicator = document.getElementById('recording-indicator');
+                const textEl = document.getElementById('recording-text');
+
+                if (count > 0) {
+                    indicator.classList.remove('is-inactive');
+                    indicator.classList.add('is-active');
+                    textEl.textContent = `${count} ${count === 1 ? 'CHANNEL' : 'CHANNELS'} RECORDING`;
                 } else {
-                    counter_el.textContent = `NO RECORDING`;
+                    indicator.classList.remove('is-active');
+                    indicator.classList.add('is-inactive');
+                    textEl.textContent = 'NO RECORDING';
+                }
+            }
+
+            // Update card status class based on badge content
+            function updateCardStatus(infoElement) {
+                const card = infoElement.closest('.channel-card');
+                if (!card) return;
+
+                const badge = infoElement.querySelector('.status-badge');
+                if (!badge) return;
+
+                card.classList.remove('is-recording', 'is-paused');
+
+                if (badge.classList.contains('is-recording')) {
+                    card.classList.add('is-recording');
+                } else if (badge.classList.contains('is-paused')) {
+                    card.classList.add('is-paused');
                 }
             }
 
             // before content was swapped by HTMX
             document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
-                // ignore anything with `-log` content swap if "auto-update" was unchecked
-                let sswe_id = e.detail.elt.getAttribute('sse-swap')
-                if (sswe_id && sswe_id.endsWith("-log") ) {
-                    if (!e.detail.elt.closest(".ts-box").querySelector("[type=checkbox]").checked) {
+                let sse_id = e.detail.elt.getAttribute('sse-swap')
+                if (sse_id && sse_id.endsWith("-log")) {
+                    if (!e.detail.elt.closest(".channel-card").querySelector("[type=checkbox]").checked) {
                         e.preventDefault()
                         return
                     }
                 }
-                // else scroll the textarea to bottom with async trick
                 setTimeout(() => {
-                    let textarea = e.detail.elt.closest(".ts-box").querySelector("textarea")
-                    textarea.scrollTop = textarea.scrollHeight
+                    let textarea = e.detail.elt.closest(".channel-card").querySelector("textarea")
+                    if (textarea) {
+                        textarea.scrollTop = textarea.scrollHeight
+                    }
                 }, 0)
             })
 
             // after content was swapped by HTMX (for status updates)
             document.body.addEventListener("htmx:sseMessage", function (e) {
-                // only update recording count if the content swap is for channel info
-                let sswe_id = e.detail.elt.getAttribute('sse-swap')
-                if (sswe_id && sswe_id.endsWith("-info") ) {
+                let sse_id = e.detail.elt.getAttribute('sse-swap')
+                if (sse_id && sse_id.endsWith("-info")) {
+                    updateCardStatus(e.detail.elt);
                     updateRecordingCount();
                 }
             })
 
-            // Initial count on page load
+            // Initial setup on page load
             document.addEventListener("DOMContentLoaded", function() {
+                // Update card statuses
+                document.querySelectorAll('.channel-info-section').forEach(el => {
+                    updateCardStatus(el);
+                });
                 updateRecordingCount();
-            });
 
-            document.body.querySelectorAll("textarea").forEach((textarea) => {
-                textarea.scrollTop = textarea.scrollHeight
-            })
+                // Scroll all textareas to bottom
+                document.querySelectorAll("textarea").forEach((textarea) => {
+                    textarea.scrollTop = textarea.scrollHeight
+                })
+            });
         </script>
     </body>
 </html>

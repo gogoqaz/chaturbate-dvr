@@ -1,115 +1,293 @@
 {{ define "channel_info" }}
+<style>
+    /* Channel Info Styles */
+    .channel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+    }
+
+    .channel-username {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.25rem 0.625rem;
+        border-radius: 9999px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .status-badge.is-recording {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+
+    .status-badge.is-recording .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #22c55e;
+        animation: status-pulse 2s ease-in-out infinite;
+    }
+
+    .status-badge.is-offline {
+        background: rgba(107, 114, 128, 0.15);
+        color: #6b7280;
+    }
+
+    .status-badge.is-paused {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
+    }
+
+    @keyframes status-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.875rem;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .info-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.625rem;
+    }
+
+    .info-item.is-full-width {
+        grid-column: 1 / -1;
+    }
+
+    .info-icon {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 6px;
+        flex-shrink: 0;
+    }
+
+    .info-icon .ts-icon {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+    }
+
+    .info-content {
+        min-width: 0;
+        flex: 1;
+    }
+
+    .info-label {
+        font-size: 0.7rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-bottom: 0.125rem;
+    }
+
+    .info-value {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        word-break: break-all;
+        line-height: 1.4;
+    }
+
+    .info-value a {
+        color: var(--accent-primary);
+        text-decoration: none;
+        transition: color 0.2s ease;
+    }
+
+    .info-value a:hover {
+        color: var(--accent-hover);
+    }
+
+    .info-value.is-live {
+        color: #22c55e;
+        font-weight: 500;
+    }
+
+    /* Action Buttons */
+    .channel-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+        margin-top: 1.25rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .action-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.375rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 1px solid transparent;
+    }
+
+    .action-btn.is-resume {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+        border-color: rgba(34, 197, 94, 0.3);
+    }
+
+    .action-btn.is-resume:hover {
+        background: rgba(34, 197, 94, 0.25);
+    }
+
+    .action-btn.is-pause {
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        border-color: var(--border-color);
+    }
+
+    .action-btn.is-pause:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+    }
+
+    .action-btn.is-delete {
+        background: transparent;
+        color: #ef4444;
+        border-color: rgba(239, 68, 68, 0.3);
+    }
+
+    .action-btn.is-delete:hover {
+        background: rgba(239, 68, 68, 0.15);
+    }
+
+    .action-btn .ts-icon {
+        font-size: 0.75rem;
+    }
+</style>
 
 <!-- Header -->
-<div class="ts-grid is-middle-aligned">
-    <div class="column is-fluid">
-        <div class="ts-header">{{ .Username }}</div>
-    </div>
-    <div class="column">
-        {{ if and .IsOnline (not .IsPaused) }}
-        <span class="ts-badge is-small is-start-spaced">RECORDING</span>
-        {{ else if and (not .IsOnline) (not .IsPaused) }}
-        <span class="ts-badge is-secondary is-small is-start-spaced">OFFLINE</span>
-        {{ else if .IsPaused }}
-        <span class="ts-badge is-negative is-small is-start-spaced">PAUSED</span>
-        {{ end }}
-    </div>
+<div class="channel-header">
+    <h3 class="channel-username">{{ .Username }}</h3>
+    {{ if and .IsOnline (not .IsPaused) }}
+    <span class="status-badge is-recording">
+        <span class="status-dot"></span>
+        RECORDING
+    </span>
+    {{ else if and (not .IsOnline) (not .IsPaused) }}
+    <span class="status-badge is-offline">OFFLINE</span>
+    {{ else if .IsPaused }}
+    <span class="status-badge is-paused">PAUSED</span>
+    {{ end }}
 </div>
 <!-- / Header -->
 
-<div class="ts-divider has-top-spaced"></div>
-
-<!-- Info: Channel URL -->
-<div class="ts-grid has-top-spaced">
-    <div class="column">
-        <span class="ts-icon is-link-icon"></span>
+<!-- Info Grid -->
+<div class="info-grid">
+    <!-- Channel URL -->
+    <div class="info-item is-full-width">
+        <div class="info-icon">
+            <span class="ts-icon is-link-icon"></span>
+        </div>
+        <div class="info-content">
+            <div class="info-label">Channel</div>
+            <div class="info-value">
+                <a href="{{ .GlobalConfig.Domain }}{{ .Username }}" target="_blank">{{ .GlobalConfig.Domain }}{{ .Username }}</a>
+            </div>
+        </div>
     </div>
-    <div class="column is-fluid">
-        <div class="ts-text is-small is-bold">Channel URL</div>
-        <a class="ts-text is-small is-link is-external-link" href="{{ .GlobalConfig.Domain }}{{ .Username }}" target="_blank"> {{ .GlobalConfig.Domain }}{{ .Username }}</a>
+
+    <!-- Filename -->
+    <div class="info-item is-full-width">
+        <div class="info-icon">
+            <span class="ts-icon is-folder-icon"></span>
+        </div>
+        <div class="info-content">
+            <div class="info-label">Filename</div>
+            <div class="info-value">{{ if .Filename }}{{ .Filename }}{{ else }}-{{ end }}</div>
+        </div>
+    </div>
+
+    <!-- Last streamed at -->
+    <div class="info-item">
+        <div class="info-icon">
+            <span class="ts-icon is-tower-broadcast-icon"></span>
+        </div>
+        <div class="info-content">
+            <div class="info-label">Last Stream</div>
+            <div class="info-value {{ if and .IsOnline (not .IsPaused) }}is-live{{ end }}">
+                {{ if .StreamedAt }}{{ .StreamedAt }}{{ if and .IsOnline (not .IsPaused) }} (LIVE){{ end }}{{ else }}-{{ end }}
+            </div>
+        </div>
+    </div>
+
+    <!-- Segment duration -->
+    <div class="info-item">
+        <div class="info-icon">
+            <span class="ts-icon is-clock-icon"></span>
+        </div>
+        <div class="info-content">
+            <div class="info-label">Duration</div>
+            <div class="info-value">{{ if .Duration }}{{ .Duration }}{{ if .MaxDuration }} / {{ .MaxDuration }}{{ end }}{{ else }}-{{ end }}</div>
+        </div>
+    </div>
+
+    <!-- Segment filesize -->
+    <div class="info-item is-full-width">
+        <div class="info-icon">
+            <span class="ts-icon is-chart-pie-icon"></span>
+        </div>
+        <div class="info-content">
+            <div class="info-label">Filesize</div>
+            <div class="info-value">{{ if .Filesize }}{{ .Filesize }}{{ if .MaxFilesize }} / {{ .MaxFilesize }}{{ end }}{{ else }}-{{ end }}</div>
+        </div>
     </div>
 </div>
-<!-- / Info: Channel URL -->
-
-<!-- Info: Filename -->
-<div class="ts-grid has-top-spaced">
-    <div class="column">
-        <span class="ts-icon is-folder-icon"></span>
-    </div>
-    <div class="column is-fluid">
-        <div class="ts-text is-small is-bold">Filename</div>
-        {{ if .Filename }}
-        <div class="ts-text is-description">{{ .Filename }}</div>
-        {{ else }}
-        <span>-</span>
-        {{ end }}
-    </div>
-</div>
-<!-- / Info: Filename -->
-
-<!-- Info: Last streamed at -->
-<div class="ts-grid ts-grid has-top-spaced">
-    <div class="column">
-        <span class="ts-icon is-tower-broadcast-icon"></span>
-    </div>
-    <div class="column is-fluid">
-        <div class="ts-text is-small is-bold">Last streamed at</div>
-        <div class="ts-text is-description">{{ if .StreamedAt }}{{ .StreamedAt }} {{ if and .IsOnline (not .IsPaused) }}(NOW){{ end }}{{ else }} - {{ end }}</div>
-    </div>
-</div>
-<!-- / Info: Last streamed at -->
-
-<!-- Info: Segment duration -->
-<div class="ts-grid ts-grid has-top-spaced">
-    <div class="column">
-        <span class="ts-icon is-clock-icon"></span>
-    </div>
-    <div class="column is-fluid">
-        <div class="ts-text is-small is-bold">Segment duration</div>
-        <div class="ts-text is-description">{{ if .Duration }} {{ .Duration }} {{ if .MaxDuration }} / {{ .MaxDuration }} {{ end }} {{ else }} - {{ end }}</div>
-    </div>
-</div>
-<!-- / Info: Segment duration -->
-
-<!-- Info: Segment filesize -->
-<div class="ts-grid has-top-spaced">
-    <div class="column">
-        <span class="ts-icon is-chart-pie-icon"></span>
-    </div>
-    <div class="column is-fluid">
-        <div class="ts-text is-small is-bold">Segment filesize</div>
-        <div class="ts-text is-description">{{ if .Filesize }} {{ .Filesize }} {{ if .MaxFilesize }} / {{ .MaxFilesize }} {{ end }} {{ else }} - {{ end }}</div>
-    </div>
-</div>
-<!-- / Info: Segment filesize -->
+<!-- / Info Grid -->
 
 <!-- Actions -->
-<div class="ts-grid is-2-columns has-top-spaced-large">
-    <div class="column">
-        {{ if .IsPaused }}
-        <form>
-            <button class="ts-button is-start-icon is-fluid" hx-post="/resume_channel/{{ .Username }}" hx-swap="none">
-                <span class="ts-icon is-play-icon"></span>
-                Resume
-            </button>
-        </form>
-        {{ else }}
-        <form>
-            <button type="submit" class="ts-button is-start-icon is-secondary is-fluid" hx-post="/pause_channel/{{ .Username }}" hx-swap="none">
-                <span class="ts-icon is-pause-icon"></span>
-                Pause
-            </button>
-        </form>
-        {{ end }}
-    </div>
-    <div class="column">
-        <form action="/stop_channel/{{ .Username }}" method="POST" onsubmit="return confirm('Are you sure you want to delete `{{ .Username }}` channel?')">
-            <button class="ts-button is-start-icon is-outlined is-negative is-fluid" >
-                <span class="ts-icon is-trash-icon"></span>
-                Delete
-            </button>
-        </form>
-    </div>
+<div class="channel-actions">
+    {{ if .IsPaused }}
+    <form style="display: contents;">
+        <button type="button" class="action-btn is-resume" hx-post="/resume_channel/{{ .Username }}" hx-swap="none">
+            <span class="ts-icon is-play-icon"></span>
+            Resume
+        </button>
+    </form>
+    {{ else }}
+    <form style="display: contents;">
+        <button type="button" class="action-btn is-pause" hx-post="/pause_channel/{{ .Username }}" hx-swap="none">
+            <span class="ts-icon is-pause-icon"></span>
+            Pause
+        </button>
+    </form>
+    {{ end }}
+    <form action="/stop_channel/{{ .Username }}" method="POST" style="display: contents;" onsubmit="return confirm('Are you sure you want to delete the channel &quot;{{ .Username }}&quot;?')">
+        <button type="submit" class="action-btn is-delete">
+            <span class="ts-icon is-trash-icon"></span>
+            Delete
+        </button>
+    </form>
 </div>
 <!-- / Actions -->
 {{ end }}
