@@ -162,11 +162,22 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	})
 
 	sort.Slice(channels, func(i, j int) bool {
-		// First priority: Online channels
-		if channels[i].IsOnline != channels[j].IsOnline {
-			return channels[i].IsOnline
+		// Helper function to get sort priority
+		getPriority := func(c *entity.ChannelInfo) int {
+			if c.IsOnline && !c.IsPaused {
+				return 0 // Recording - highest priority
+			}
+			if c.IsPaused {
+				return 1 // Paused
+			}
+			return 2 // Offline
 		}
-		// Second priority: Alphabetical order by username
+
+		pi, pj := getPriority(channels[i]), getPriority(channels[j])
+		if pi != pj {
+			return pi < pj
+		}
+		// Same priority: sort by username alphabetically
 		return strings.ToLower(channels[i].Username) < strings.ToLower(channels[j].Username)
 	})
 

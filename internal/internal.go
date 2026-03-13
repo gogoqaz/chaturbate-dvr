@@ -41,14 +41,24 @@ func FormatFilesize(filesize int) string {
 	}
 }
 
+var (
+	// Old format: media_w1920_12345.ts
+	segmentSeqTSRegexp = regexp.MustCompile(`_(\d+)\.ts$`)
+	// New LL-HLS format: seg_4_6543_video_11903984827994253865_llhls.m4s?session=xxx
+	segmentSeqM4SRegexp = regexp.MustCompile(`seg_\d+_(\d+)_`)
+)
+
 // SegmentSeq extracts the segment sequence number from a filename.
 func SegmentSeq(filename string) int {
-	re := regexp.MustCompile(`_(\d+)\.ts$`)
-	match := re.FindStringSubmatch(filename)
-
-	if len(match) > 1 {
-		number, err := strconv.Atoi(match[1])
-		if err == nil {
+	// Old format: xxx_12345.ts
+	if match := segmentSeqTSRegexp.FindStringSubmatch(filename); len(match) > 1 {
+		if number, err := strconv.Atoi(match[1]); err == nil {
+			return number
+		}
+	}
+	// New LL-HLS format: seg_X_12345_video_xxx.m4s
+	if match := segmentSeqM4SRegexp.FindStringSubmatch(filename); len(match) > 1 {
+		if number, err := strconv.Atoi(match[1]); err == nil {
 			return number
 		}
 	}

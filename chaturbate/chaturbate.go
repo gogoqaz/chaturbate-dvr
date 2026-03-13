@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,6 +84,13 @@ func FetchStream(ctx context.Context, client *internal.Req, username string) (*S
 
 // findWorkingEdgeURL validates the HLS URL and tries alternative edge regions if geo-blocked.
 func findWorkingEdgeURL(ctx context.Context, client *internal.Req, hlsSource string) (string, error) {
+	// LL-HLS URLs use token-based sessions; HEAD requests consume the token
+	// and cause subsequent GET requests to fail with "session_duplicated".
+	// Skip HEAD validation for these URLs.
+	if strings.Contains(hlsSource, "llhls.m3u8") {
+		return hlsSource, nil
+	}
+
 	// 1. Validate original URL
 	statusCode, err := client.Head(ctx, hlsSource)
 	if err == nil && statusCode == 200 {
@@ -181,7 +189,7 @@ func PickPlaylist(masterPlaylist *m3u8.MasterPlaylist, baseURL string, resolutio
 			return nil, fmt.Errorf("parse resolution: %w", err)
 		}
 		framerateVal := 30
-		if strings.Contains(v.Name, "FPS:60.0") {
+		if v.FrameRate >= 59.0 || strings.Contains(v.Name, "FPS:60.0") {
 			framerateVal = 60
 		}
 		if _, exists := resolutions[width]; !exists {
@@ -221,11 +229,24 @@ func PickPlaylist(masterPlaylist *m3u8.MasterPlaylist, baseURL string, resolutio
 	}
 
 	return &Playlist{
-		PlaylistURL: strings.TrimSuffix(baseURL, "playlist.m3u8") + playlistURL,
-		RootURL:     strings.TrimSuffix(baseURL, "playlist.m3u8"),
+		PlaylistURL: resolveURL(baseURL, playlistURL),
+		RootURL:     baseURL,
 		Resolution:  finalResolution,
 		Framerate:   finalFramerate,
 	}, nil
+}
+
+// resolveURL resolves a potentially relative or absolute URI against a base URL.
+func resolveURL(baseURL, ref string) string {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return ref
+	}
+	refURL, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return base.ResolveReference(refURL).String()
 }
 
 // WatchHandler is a function type that processes video segments.
@@ -234,8 +255,9 @@ type WatchHandler func(b []byte, duration float64) error
 // WatchSegments continuously fetches and processes video segments.
 func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler) error {
 	var (
-		client  = internal.NewReq()
-		lastSeq = -1
+		client      = internal.NewReq()
+		lastSeq     = -1
+		initWritten = false
 	)
 
 	for {
@@ -253,6 +275,27 @@ func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler) erro
 			return fmt.Errorf("cast to media playlist")
 		}
 
+		// Handle init segment for fMP4/LL-HLS format (EXT-X-MAP)
+		if !initWritten && playlist.Map != nil && playlist.Map.URI != "" {
+			initURL := resolveURL(p.PlaylistURL, playlist.Map.URI)
+			initData, initErr := retry.DoWithData(
+				func() ([]byte, error) {
+					return client.GetBytes(ctx, initURL)
+				},
+				retry.Context(ctx),
+				retry.Attempts(3),
+				retry.Delay(600*time.Millisecond),
+				retry.DelayType(retry.FixedDelay),
+			)
+			if initErr != nil {
+				return fmt.Errorf("fetch init segment: %w", initErr)
+			}
+			if err := handler(initData, 0); err != nil {
+				return fmt.Errorf("handler init: %w", err)
+			}
+			initWritten = true
+		}
+
 		// Process new segments
 		for _, v := range playlist.Segments {
 			if v == nil {
@@ -265,8 +308,9 @@ func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler) erro
 			lastSeq = seq
 
 			// Fetch segment data with retry mechanism
+			segmentURL := resolveURL(p.PlaylistURL, v.URI)
 			pipeline := func() ([]byte, error) {
-				return client.GetBytes(ctx, fmt.Sprintf("%s%s", p.RootURL, v.URI))
+				return client.GetBytes(ctx, segmentURL)
 			}
 
 			resp, err := retry.DoWithData(
