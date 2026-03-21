@@ -19,13 +19,16 @@ jobs:
           go-version: "1.23"
 
       - name: Build binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+          LDFLAGS: -s -w -X main.version=${{ github.ref_name }}
         run: |
-          GOOS=windows GOARCH=amd64 go build -o bin/x64_windows_chaturbate-dvr.exe
-          GOOS=darwin GOARCH=amd64 go build -o bin/x64_macos_chaturbate-dvr
-          GOOS=linux GOARCH=amd64 go build -o bin/x64_linux_chaturbate-dvr
-          GOOS=windows GOARCH=arm64 go build -o bin/arm64_windows_chaturbate-dvr.exe
-          GOOS=darwin GOARCH=arm64 go build -o bin/arm64_macos_chaturbate-dvr
-          GOOS=linux GOARCH=arm64 go build -o bin/arm64_linux_chaturbate-dvr
+          GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o bin/x64_windows_chaturbate-dvr.exe
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o bin/x64_macos_chaturbate-dvr
+          GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o bin/x64_linux_chaturbate-dvr
+          GOOS=windows GOARCH=arm64 go build -ldflags "$LDFLAGS" -o bin/arm64_windows_chaturbate-dvr.exe
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o bin/arm64_macos_chaturbate-dvr
+          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o bin/arm64_linux_chaturbate-dvr
 
       - name: Create release
         uses: softprops/action-gh-release@v2
