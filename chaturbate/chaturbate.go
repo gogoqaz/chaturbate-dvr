@@ -47,6 +47,20 @@ func (c *Client) GetStream(ctx context.Context, username string) (*Stream, error
 	return FetchStream(ctx, c.Req, username)
 }
 
+// GetRoomStatus returns the room status string (public, private, away, offline, etc.)
+func (c *Client) GetRoomStatus(ctx context.Context, username string) string {
+	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, username)
+	body, err := c.Req.Get(ctx, apiURL)
+	if err != nil {
+		return ""
+	}
+	var resp APIResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return ""
+	}
+	return resp.RoomStatus
+}
+
 // FetchStream retrieves the streaming data using the Chaturbate API.
 func FetchStream(ctx context.Context, client *internal.Req, username string) (*Stream, error) {
 	// Call /api/chatvideocontext/{username}/

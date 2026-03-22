@@ -2,9 +2,9 @@
 
 A tool to record **multiple** Chaturbate streams. Supports macOS, Windows, Linux, and Docker. Favicon from [Twemoji](https://github.com/twitter/twemoji).
 
-![Image](https://github.com/user-attachments/assets/d71f0aaa-e821-4371-9f48-658a137b42b6)
+![Screenshot](assets/screenshot-main.png)
 
-![Image](https://github.com/user-attachments/assets/43ab0a07-0ece-40ba-9a0f-045ca0316638)
+![Screenshot](assets/screenshot-settings.png)
 
 &nbsp;
 
@@ -132,7 +132,7 @@ _Note: In Web UI mode, these flags serve as default values for new channels._
 
 You can set Cookies and User-Agent via the Web UI or command-line arguments.
 
-![localhost_8080_ (4)](https://github.com/user-attachments/assets/cbd859a9-4255-404b-b6bf-fa89342f7258)
+![Settings](assets/screenshot-settings.png)
 
 _Note: Use semicolons to separate multiple cookies, e.g., `key1=value1; key2=value2`._
 

@@ -21,6 +21,7 @@ type Channel struct {
 	UpdateCh        chan bool
 
 	IsOnline   bool
+	RoomStatus string // public, private, group, away, offline
 	StreamedAt int64
 	Duration   float64 // Seconds
 	Filesize   int     // Bytes
@@ -99,6 +100,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	return &entity.ChannelInfo{
 		IsOnline:     ch.IsOnline,
 		IsPaused:     ch.Config.IsPaused,
+		RoomStatus:   ch.RoomStatus,
 		Username:     ch.Config.Username,
 		MaxDuration:  internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
 		MaxFilesize:  internal.FormatFilesize(ch.Config.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
@@ -198,13 +200,11 @@ func (ch *Channel) checkOnlineStatus(ctx context.Context, client *internal.Req) 
 		return
 	}
 	isOnline := resp.RoomStatus != "away" && resp.RoomStatus != "offline" && resp.RoomStatus != ""
-	if ch.IsOnline != isOnline {
-		ch.IsOnline = isOnline
-		if isOnline {
-			ch.Info("channel is online (paused)")
-		} else {
-			ch.Info("channel is offline (paused)")
-		}
+	statusChanged := ch.IsOnline != isOnline || ch.RoomStatus != resp.RoomStatus
+	ch.IsOnline = isOnline
+	ch.RoomStatus = resp.RoomStatus
+	if statusChanged {
+		ch.Info("channel status: %s (paused)", resp.RoomStatus)
 		ch.Update()
 	}
 }

@@ -53,7 +53,7 @@
                         <span class="w-2 h-2 rounded-full shrink-0 {{ if and .IsOnline (not .IsPaused) }}bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]{{ else if .IsPaused }}bg-red-500{{ else }}bg-zinc-300{{ end }}"
                               data-status-dot="{{ .Username }}"></span>
                         <span class="text-sm font-semibold flex-1 truncate">{{ .Username }}</span>
-                        <span class="text-[10px] text-zinc-400 uppercase" data-status-text="{{ .Username }}">{{ if and .IsOnline (not .IsPaused) }}Rec{{ else if .IsPaused }}Paused{{ if .IsOnline }} · Live{{ end }}{{ else }}Off{{ end }}</span>
+                        <span class="text-[10px] text-zinc-400 uppercase" data-status-text="{{ .Username }}">{{ if and .IsOnline (not .IsPaused) }}Rec{{ else if .RoomStatus }}{{ .RoomStatus }}{{ else }}Checking...{{ end }}</span>
                     </div>
                     {{ end }}
                     {{ if not .Channels }}
@@ -280,7 +280,7 @@
             }
 
             // === Sidebar dot sync ===
-            function updateSidebarDot(username, status, isOnline) {
+            function updateSidebarDot(username, status, isOnline, roomStatus) {
                 var dot = document.querySelector('[data-status-dot="' + username + '"]');
                 if (!dot) return;
                 dot.className = 'w-2 h-2 rounded-full shrink-0';
@@ -295,10 +295,8 @@
                 if (textEl) {
                     if (status === 'recording') {
                         textEl.textContent = 'Rec';
-                    } else if (status === 'paused') {
-                        textEl.textContent = isOnline ? 'Paused \u00b7 Live' : 'Paused';
                     } else {
-                        textEl.textContent = 'Off';
+                        textEl.textContent = roomStatus || 'Checking...';
                     }
                 }
             }
@@ -328,7 +326,7 @@
                     var username = sseId.replace("-info", "");
                     var statusEl = e.detail.elt.querySelector("[data-status]");
                     if (statusEl) {
-                        updateSidebarDot(username, statusEl.dataset.status, statusEl.dataset.online === 'true');
+                        updateSidebarDot(username, statusEl.dataset.status, statusEl.dataset.online === 'true', statusEl.dataset.roomStatus || '');
                     }
                     updateRecordingCount();
                 }

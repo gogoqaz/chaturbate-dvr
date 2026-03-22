@@ -34,8 +34,11 @@ func (ch *Channel) Monitor() {
 		onRetry := func(_ uint, err error) {
 			ch.UpdateOnlineStatus(false)
 
+			// Fetch actual room status from API
+			ch.RoomStatus = client.GetRoomStatus(ctx, ch.Config.Username)
+
 			if errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream) {
-				ch.Info("channel is offline or private, try again in %d min(s)", server.Config.Interval)
+				ch.Info("channel is %s, try again in %d min(s)", ch.RoomStatus, server.Config.Interval)
 			} else if errors.Is(err, internal.ErrCloudflareBlocked) {
 				ch.Info("channel was blocked by Cloudflare; try with `-cookies` and `-user-agent`? try again in %d min(s)", server.Config.Interval)
 			} else if errors.Is(err, context.Canceled) {
@@ -98,6 +101,7 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 	if err != nil {
 		return fmt.Errorf("get playlist: %w", err)
 	}
+	ch.RoomStatus = "public"
 	ch.UpdateOnlineStatus(true) // Update online status after `GetPlaylist` is OK
 
 	ch.Info("stream quality - resolution %dp (target: %dp), framerate %dfps (target: %dfps)", playlist.Resolution, ch.Config.Resolution, playlist.Framerate, ch.Config.Framerate)

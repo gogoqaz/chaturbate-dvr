@@ -1,5 +1,5 @@
 {{ define "channel_info" }}
-<div data-status="{{ if and .IsOnline (not .IsPaused) }}recording{{ else if .IsPaused }}paused{{ else }}offline{{ end }}" data-online="{{ if .IsOnline }}true{{ else }}false{{ end }}">
+<div data-status="{{ if and .IsOnline (not .IsPaused) }}recording{{ else if .IsPaused }}paused{{ else }}offline{{ end }}" data-online="{{ if .IsOnline }}true{{ else }}false{{ end }}" data-room-status="{{ .RoomStatus }}">
 
   <!-- Thumbnail -->
   <div class="mb-3 rounded-lg overflow-hidden bg-zinc-100 aspect-video">
@@ -15,9 +15,9 @@
     {{ if and .IsOnline (not .IsPaused) }}
     <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-green-100 text-green-600 uppercase">Recording</span>
     {{ else if .IsPaused }}
-    <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-red-50 text-red-500 uppercase">Paused{{ if .IsOnline }} · Live{{ end }}</span>
+    <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-red-50 text-red-500 uppercase">{{ if .RoomStatus }}{{ .RoomStatus }}{{ else }}Paused{{ end }}</span>
     {{ else }}
-    <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-zinc-100 text-zinc-400 uppercase">Offline</span>
+    <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full {{ if eq .RoomStatus "private" }}bg-purple-50 text-purple-500{{ else if eq .RoomStatus "away" }}bg-amber-50 text-amber-500{{ else }}bg-zinc-100 text-zinc-400{{ end }} uppercase">{{ if .RoomStatus }}{{ .RoomStatus }}{{ else }}Offline{{ end }}</span>
     {{ end }}
   </div>
   <!-- / Header -->
