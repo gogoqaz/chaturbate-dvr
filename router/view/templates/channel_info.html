@@ -1,5 +1,13 @@
 {{ define "channel_info" }}
-<div data-status="{{ if and .IsOnline (not .IsPaused) }}recording{{ else if .IsPaused }}paused{{ else }}offline{{ end }}">
+<div data-status="{{ if and .IsOnline (not .IsPaused) }}recording{{ else if .IsPaused }}paused{{ else }}offline{{ end }}" data-online="{{ if .IsOnline }}true{{ else }}false{{ end }}">
+
+  <!-- Thumbnail -->
+  <div class="mb-3 rounded-lg overflow-hidden bg-zinc-100 aspect-video">
+    <img src="https://thumb.live.mmcdn.com/ri/{{ .Username }}.jpg"
+         alt="{{ .Username }}"
+         class="w-full h-full object-cover"
+         onerror="this.style.display='none'" />
+  </div>
 
   <!-- Header -->
   <div class="flex items-center justify-between">
@@ -7,7 +15,7 @@
     {{ if and .IsOnline (not .IsPaused) }}
     <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-green-100 text-green-600 uppercase">Recording</span>
     {{ else if .IsPaused }}
-    <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-red-50 text-red-500 uppercase">Paused</span>
+    <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-red-50 text-red-500 uppercase">Paused{{ if .IsOnline }} · Live{{ end }}</span>
     {{ else }}
     <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-zinc-100 text-zinc-400 uppercase">Offline</span>
     {{ end }}

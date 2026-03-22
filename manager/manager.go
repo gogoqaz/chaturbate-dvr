@@ -73,12 +73,15 @@ func (m *Manager) LoadConfig() error {
 		return fmt.Errorf("unmarshal: %w", err)
 	}
 
+	pausedSeq := 0
 	for i, conf := range config {
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
 
 		if ch.Config.IsPaused {
 			ch.Info("channel was paused, waiting for resume")
+			go ch.CheckOnlineWhilePaused(pausedSeq)
+			pausedSeq++
 			continue
 		}
 		go ch.Resume(i)
@@ -165,12 +168,15 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 		// Helper function to get sort priority
 		getPriority := func(c *entity.ChannelInfo) int {
 			if c.IsOnline && !c.IsPaused {
-				return 0 // Recording - highest priority
+				return 0 // Recording
+			}
+			if c.IsPaused && c.IsOnline {
+				return 1 // Paused but online
 			}
 			if c.IsPaused {
-				return 1 // Paused
+				return 2 // Paused and offline
 			}
-			return 2 // Offline
+			return 3 // Offline
 		}
 
 		pi, pj := getPriority(channels[i]), getPriority(channels[j])
