@@ -20,12 +20,13 @@ type Channel struct {
 	LogCh           chan string
 	UpdateCh        chan bool
 
-	IsOnline   bool
-	RoomStatus string // public, private, group, away, offline
-	StreamedAt int64
-	Duration   float64 // Seconds
-	Filesize   int     // Bytes
-	Sequence   int
+	IsOnline        bool
+	RoomStatus      string // public, private, group, away, offline
+	LastStatusCheck int64  // unix timestamp of last API status check
+	StreamedAt      int64
+	Duration        float64 // Seconds
+	Filesize        int     // Bytes
+	Sequence        int
 
 	Logs []string
 
@@ -168,7 +169,8 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 
 // CheckOnlineWhilePaused periodically checks if the channel is online while paused.
 // startSeq staggers the initial check: waits startSeq*5 seconds before first check,
-// then continues checking every Interval minutes.
+// then continues checking every 10 minutes as a background fallback.
+// Status is also refreshed on-demand when the user loads the web page (see RefreshStatus).
 func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
 	client := chaturbate.NewClient()
 
@@ -179,21 +181,43 @@ func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
 	}
 
 	for {
-		status := client.GetRoomStatus(ctx, ch.Config.Username)
-		if status != "" {
-			isOnline := status != chaturbate.StatusAway && status != chaturbate.StatusOffline
-			if ch.IsOnline != isOnline || ch.RoomStatus != status {
-				ch.IsOnline = isOnline
-				ch.RoomStatus = status
-				ch.Info("channel status: %s (paused)", status)
-				ch.Update()
-			}
-		}
+		ch.fetchAndUpdateStatus(ctx, client)
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Duration(server.Config.Interval) * time.Minute):
+		case <-time.After(10 * time.Minute):
 		}
+	}
+}
+
+// RefreshStatus checks the channel's online status if it hasn't been checked recently (30s debounce).
+// This is called asynchronously when the user refreshes the web page.
+func (ch *Channel) RefreshStatus() {
+	if !ch.Config.IsPaused {
+		return
+	}
+	if time.Since(time.Unix(ch.LastStatusCheck, 0)) < 30*time.Second {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ch.fetchAndUpdateStatus(ctx, chaturbate.NewClient())
+	}()
+}
+
+func (ch *Channel) fetchAndUpdateStatus(ctx context.Context, client *chaturbate.Client) {
+	status := client.GetRoomStatus(ctx, ch.Config.Username)
+	ch.LastStatusCheck = time.Now().Unix()
+	if status == "" {
+		return
+	}
+	isOnline := status != chaturbate.StatusAway && status != chaturbate.StatusOffline
+	if ch.IsOnline != isOnline || ch.RoomStatus != status {
+		ch.IsOnline = isOnline
+		ch.RoomStatus = status
+		ch.Info("channel status: %s (paused)", status)
+		ch.Update()
 	}
 }

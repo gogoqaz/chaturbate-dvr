@@ -19,6 +19,7 @@ type IndexData struct {
 
 // Index renders the index page with channel information.
 func Index(c *gin.Context) {
+	server.Manager.RefreshPausedStatuses()
 	c.HTML(200, "index.html", &IndexData{
 		Config:   server.Config,
 		Channels: server.Manager.ChannelInfo(),

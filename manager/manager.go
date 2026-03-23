@@ -157,6 +157,15 @@ func (m *Manager) ResumeChannel(username string) error {
 	return nil
 }
 
+// RefreshPausedStatuses triggers an on-demand status check for all paused channels.
+// Each channel has its own 30s debounce to avoid excessive API calls.
+func (m *Manager) RefreshPausedStatuses() {
+	m.Channels.Range(func(key, value any) bool {
+		value.(*channel.Channel).RefreshStatus()
+		return true
+	})
+}
+
 // ChannelInfo returns a list of channel information for the web UI.
 func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	var channels []*entity.ChannelInfo
