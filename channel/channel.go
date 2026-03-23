@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"time"
 
-	"github.com/teacat/chaturbate-dvr/chaturbate"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/internal"
 	"github.com/teacat/chaturbate-dvr/server"
@@ -16,17 +14,16 @@ import (
 
 // Channel represents a channel instance.
 type Channel struct {
-	CancelFunc      context.CancelFunc
-	PauseCancelFunc context.CancelFunc // cancels the paused online-check goroutine
-	LogCh           chan string
-	UpdateCh        chan bool
+	CancelFunc context.CancelFunc
+	LogCh      chan string
+	UpdateCh   chan bool
 
 	IsOnline   bool
 	RoomStatus string // public, private, group, away, offline
-	StreamedAt      int64
-	Duration        float64 // Seconds
-	Filesize        int     // Bytes
-	Sequence        int
+	StreamedAt int64
+	Duration   float64 // Seconds
+	Filesize   int     // Bytes
+	Sequence   int
 
 	Logs []string
 
@@ -42,11 +39,10 @@ type Channel struct {
 // New creates a new channel instance with the given manager and configuration.
 func New(conf *entity.ChannelConfig) *Channel {
 	ch := &Channel{
-		LogCh:           make(chan string),
-		UpdateCh:        make(chan bool),
-		Config:          conf,
-		CancelFunc:      func() {},
-		PauseCancelFunc: func() {},
+		LogCh:      make(chan string),
+		UpdateCh:   make(chan bool),
+		Config:     conf,
+		CancelFunc: func() {},
 	}
 	go ch.Publisher()
 
@@ -131,18 +127,11 @@ func (ch *Channel) Pause() {
 	ch.Config.IsPaused = true
 	ch.Update()
 	ch.Info("channel paused")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	ch.PauseCancelFunc = cancel
-	go ch.CheckOnlineWhilePaused(ctx, 0)
 }
 
 // Stop stops the channel and cancels the context.
 func (ch *Channel) Stop() {
-	// Stop the monitoring loop
 	ch.CancelFunc()
-	ch.PauseCancelFunc() // stop the online-check goroutine if running
-
 	ch.Info("channel stopped")
 }
 
@@ -151,7 +140,6 @@ func (ch *Channel) Stop() {
 // `startSeq` is used to prevent all channels from starting at the same time, preventing TooManyRequests errors.
 // It's only be used when program starting and trying to resume all channels at once.
 func (ch *Channel) Resume(startSeq int) {
-	ch.PauseCancelFunc() // stop the online-check goroutine
 	ch.Config.IsPaused = false
 
 	ch.Update()
@@ -167,40 +155,3 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 	ch.Update()
 }
 
-// CheckOnlineWhilePaused periodically checks if the channel is online while paused.
-// startSeq staggers the initial check: waits startSeq*5 seconds before first check,
-// then continues checking every 10 minutes with random jitter to spread out API calls.
-func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
-	client := chaturbate.NewClient()
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(time.Duration(startSeq*5) * time.Second):
-	}
-
-	for {
-		ch.fetchAndUpdateStatus(ctx, client)
-
-		jitter := time.Duration(rand.Intn(120)) * time.Second
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(10*time.Minute + jitter):
-		}
-	}
-}
-
-func (ch *Channel) fetchAndUpdateStatus(ctx context.Context, client *chaturbate.Client) {
-	status := client.GetRoomStatus(ctx, ch.Config.Username)
-	if status == "" {
-		return
-	}
-	isOnline := status != chaturbate.StatusAway && status != chaturbate.StatusOffline
-	if ch.IsOnline != isOnline || ch.RoomStatus != status {
-		ch.IsOnline = isOnline
-		ch.RoomStatus = status
-		ch.Info("channel status: %s (paused)", status)
-		ch.Update()
-	}
-}
