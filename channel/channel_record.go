@@ -50,10 +50,8 @@ func (ch *Channel) Monitor() {
 				delay := cfBackoffMinutes(cfBlockCount, server.Config.Interval)
 				ch.Info("blocked by Cloudflare (attempt %d); try with `-cookies` and `-user-agent`? try again in %d min(s)", cfBlockCount, delay)
 			} else if errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream) {
-				if ctx.Err() == nil {
-					ch.RoomStatus = client.GetRoomStatus(ctx, ch.Config.Username)
-					ch.Update()
-				}
+				ch.RoomStatus = client.LastRoomStatus
+				ch.Update()
 				ch.Info("channel is %s, try again in %d min(s)", ch.RoomStatus, server.Config.Interval)
 			} else if errors.Is(err, context.Canceled) {
 				// ...

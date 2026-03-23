@@ -41,7 +41,8 @@ type APIResponse struct {
 
 // Client represents an API client for interacting with Chaturbate.
 type Client struct {
-	Req *internal.Req
+	Req            *internal.Req
+	LastRoomStatus string // cached from the most recent API call
 }
 
 // NewClient initializes and returns a new Client instance.
@@ -52,8 +53,11 @@ func NewClient() *Client {
 }
 
 // GetStream fetches the stream information for a given username.
+// The room status is cached in Client.LastRoomStatus.
 func (c *Client) GetStream(ctx context.Context, username string) (*Stream, error) {
-	return FetchStream(ctx, c.Req, username)
+	stream, roomStatus, err := FetchStream(ctx, c.Req, username)
+	c.LastRoomStatus = roomStatus
+	return stream, err
 }
 
 // GetRoomStatus returns the room status string (public, private, away, offline, etc.)
@@ -71,38 +75,39 @@ func (c *Client) GetRoomStatus(ctx context.Context, username string) string {
 }
 
 // FetchStream retrieves the streaming data using the Chaturbate API.
-func FetchStream(ctx context.Context, client *internal.Req, username string) (*Stream, error) {
+// Returns the stream, the room status string, and any error.
+func FetchStream(ctx context.Context, client *internal.Req, username string) (*Stream, string, error) {
 	// Call /api/chatvideocontext/{username}/
 	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, username)
 	body, err := client.Get(ctx, apiURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get API response: %w", err)
+		return nil, "", fmt.Errorf("failed to get API response: %w", err)
 	}
 
 	var resp APIResponse
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse API response: %w", err)
+		return nil, "", fmt.Errorf("failed to parse API response: %w", err)
 	}
 
 	// Handle room status
 	switch resp.RoomStatus {
 	case StatusPrivate:
-		return nil, internal.ErrPrivateStream
+		return nil, resp.RoomStatus, internal.ErrPrivateStream
 	case StatusAway, StatusOffline:
-		return nil, internal.ErrChannelOffline
+		return nil, resp.RoomStatus, internal.ErrChannelOffline
 	}
 
 	if resp.HLSSource == "" {
-		return nil, internal.ErrChannelOffline
+		return nil, resp.RoomStatus, internal.ErrChannelOffline
 	}
 
 	// Find working edge URL (geo-blocking fallback)
 	workingURL, err := findWorkingEdgeURL(ctx, client, resp.HLSSource)
 	if err != nil {
-		return nil, err
+		return nil, resp.RoomStatus, err
 	}
 
-	return &Stream{HLSSource: workingURL}, nil
+	return &Stream{HLSSource: workingURL}, resp.RoomStatus, nil
 }
 
 // findWorkingEdgeURL validates the HLS URL and tries alternative edge regions if geo-blocked.
