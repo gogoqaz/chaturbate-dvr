@@ -2,12 +2,12 @@ package channel
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"github.com/teacat/chaturbate-dvr/chaturbate"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/internal"
 	"github.com/teacat/chaturbate-dvr/server"
@@ -124,8 +124,9 @@ func (ch *Channel) Pause() {
 	ch.Update()
 	ch.Info("channel paused")
 
-	// Start a lightweight goroutine to periodically check if the channel is online
-	go ch.CheckOnlineWhilePaused(0)
+	ctx, cancel := context.WithCancel(context.Background())
+	ch.PauseCancelFunc = cancel
+	go ch.CheckOnlineWhilePaused(ctx, 0)
 }
 
 // Stop stops the channel and cancels the context.
@@ -161,50 +162,31 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 // CheckOnlineWhilePaused periodically checks if the channel is online while paused.
 // startSeq staggers the initial check: waits startSeq*5 seconds before first check,
 // then continues checking every Interval minutes.
-func (ch *Channel) CheckOnlineWhilePaused(startSeq int) {
-	ctx, cancel := context.WithCancel(context.Background())
-	ch.PauseCancelFunc = cancel
+func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
+	client := chaturbate.NewClient()
 
-	client := internal.NewReq()
-
-	// Stagger initial check by 5 seconds per channel
 	select {
 	case <-ctx.Done():
 		return
 	case <-time.After(time.Duration(startSeq*5) * time.Second):
 	}
 
-	// Do the first check immediately, then loop on interval
 	for {
-		ch.checkOnlineStatus(ctx, client)
+		status := client.GetRoomStatus(ctx, ch.Config.Username)
+		if status != "" {
+			isOnline := status != chaturbate.StatusAway && status != chaturbate.StatusOffline
+			if ch.IsOnline != isOnline || ch.RoomStatus != status {
+				ch.IsOnline = isOnline
+				ch.RoomStatus = status
+				ch.Info("channel status: %s (paused)", status)
+				ch.Update()
+			}
+		}
 
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(time.Duration(server.Config.Interval) * time.Minute):
 		}
-	}
-}
-
-// checkOnlineStatus calls the Chaturbate API to check room status.
-func (ch *Channel) checkOnlineStatus(ctx context.Context, client *internal.Req) {
-	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, ch.Config.Username)
-	body, err := client.Get(ctx, apiURL)
-	if err != nil {
-		return
-	}
-	var resp struct {
-		RoomStatus string `json:"room_status"`
-	}
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
-		return
-	}
-	isOnline := resp.RoomStatus != "away" && resp.RoomStatus != "offline" && resp.RoomStatus != ""
-	statusChanged := ch.IsOnline != isOnline || ch.RoomStatus != resp.RoomStatus
-	ch.IsOnline = isOnline
-	ch.RoomStatus = resp.RoomStatus
-	if statusChanged {
-		ch.Info("channel status: %s (paused)", resp.RoomStatus)
-		ch.Update()
 	}
 }

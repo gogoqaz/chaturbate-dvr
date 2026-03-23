@@ -2,6 +2,7 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -80,7 +81,9 @@ func (m *Manager) LoadConfig() error {
 
 		if ch.Config.IsPaused {
 			ch.Info("channel was paused, waiting for resume")
-			go ch.CheckOnlineWhilePaused(pausedSeq)
+			ctx, cancel := context.WithCancel(context.Background())
+			ch.PauseCancelFunc = cancel
+			go ch.CheckOnlineWhilePaused(ctx, pausedSeq)
 			pausedSeq++
 			continue
 		}

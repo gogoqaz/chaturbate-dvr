@@ -18,6 +18,14 @@ import (
 	"github.com/teacat/chaturbate-dvr/server"
 )
 
+// Room status constants from the Chaturbate API.
+const (
+	StatusPublic  = "public"
+	StatusPrivate = "private"
+	StatusAway    = "away"
+	StatusOffline = "offline"
+)
+
 // edgeRegionRegexp extracts edge region from URL like "edge14-sin.live.mmcdn.com"
 var edgeRegionRegexp = regexp.MustCompile(`edge\d+-([a-z]+)`)
 
@@ -77,9 +85,9 @@ func FetchStream(ctx context.Context, client *internal.Req, username string) (*S
 
 	// Handle room status
 	switch resp.RoomStatus {
-	case "private":
+	case StatusPrivate:
 		return nil, internal.ErrPrivateStream
-	case "away", "offline":
+	case StatusAway, StatusOffline:
 		return nil, internal.ErrChannelOffline
 	}
 
