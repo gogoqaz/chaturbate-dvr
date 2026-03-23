@@ -1,0 +1,11 @@
+{
+  "name": "chaturbate-dvr",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./router/view/templates/styles/input.css -o ./router/view/templates/styles/app.css --minify",
+    "dev:css": "tailwindcss -i ./router/view/templates/styles/input.css -o ./router/view/templates/styles/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4"
+  }
+}

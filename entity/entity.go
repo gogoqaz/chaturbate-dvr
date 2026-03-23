@@ -36,6 +36,7 @@ func (c *ChannelConfig) Sanitize() {
 type ChannelInfo struct {
 	IsOnline     bool
 	IsPaused     bool
+	RoomStatus   string // public, private, group, away, offline, hidden
 	Username     string
 	Duration     string
 	Filesize     string
