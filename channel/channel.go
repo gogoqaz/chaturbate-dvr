@@ -20,9 +20,8 @@ type Channel struct {
 	LogCh           chan string
 	UpdateCh        chan bool
 
-	IsOnline        bool
-	RoomStatus      string // public, private, group, away, offline
-	LastStatusCheck int64  // unix timestamp of last API status check
+	IsOnline   bool
+	RoomStatus string // public, private, group, away, offline
 	StreamedAt      int64
 	Duration        float64 // Seconds
 	Filesize        int     // Bytes
@@ -191,25 +190,8 @@ func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
 	}
 }
 
-// RefreshStatus checks the channel's online status if it hasn't been checked recently (30s debounce).
-// This is called asynchronously when the user refreshes the web page.
-func (ch *Channel) RefreshStatus() {
-	if !ch.Config.IsPaused {
-		return
-	}
-	if time.Since(time.Unix(ch.LastStatusCheck, 0)) < 30*time.Second {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		ch.fetchAndUpdateStatus(ctx, chaturbate.NewClient())
-	}()
-}
-
 func (ch *Channel) fetchAndUpdateStatus(ctx context.Context, client *chaturbate.Client) {
 	status := client.GetRoomStatus(ctx, ch.Config.Username)
-	ch.LastStatusCheck = time.Now().Unix()
 	if status == "" {
 		return
 	}
