@@ -40,28 +40,25 @@ func (ch *Channel) Monitor() {
 		onRetry := func(_ uint, err error) {
 			ch.UpdateOnlineStatus(false)
 
-			if errors.Is(err, internal.ErrCloudflareBlocked) || errors.Is(err, internal.ErrAgeVerification) {
+			if isCFBlock(err) {
 				cfBlockCount++
-			} else {
-				cfBlockCount = 0
-			}
-
-			if errors.Is(err, internal.ErrCloudflareBlocked) || errors.Is(err, internal.ErrAgeVerification) {
 				delay := cfBackoffMinutes(cfBlockCount, server.Config.Interval)
 				ch.Info("blocked by Cloudflare (attempt %d); try with `-cookies` and `-user-agent`? try again in %d min(s)", cfBlockCount, delay)
 			} else if errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream) {
+				cfBlockCount = 0
 				ch.RoomStatus = client.LastRoomStatus
 				ch.Update()
 				ch.Info("channel is %s, try again in %d min(s)", ch.RoomStatus, server.Config.Interval)
 			} else if errors.Is(err, context.Canceled) {
-				// ...
+				cfBlockCount = 0
 			} else {
+				cfBlockCount = 0
 				ch.Error("on retry: %s: retrying in %d min(s)", err.Error(), server.Config.Interval)
 			}
 		}
 
 		customDelay := func(_ uint, err error, _ *retry.Config) time.Duration {
-			if errors.Is(err, internal.ErrCloudflareBlocked) || errors.Is(err, internal.ErrAgeVerification) {
+			if isCFBlock(err) {
 				return time.Duration(cfBackoffMinutes(cfBlockCount, server.Config.Interval)) * time.Minute
 			}
 			return time.Duration(server.Config.Interval) * time.Minute
@@ -207,18 +204,17 @@ func (ch *Channel) HandleAudioInitSegment(initData []byte) error {
 	return nil
 }
 
+func isCFBlock(err error) bool {
+	return errors.Is(err, internal.ErrCloudflareBlocked) || errors.Is(err, internal.ErrAgeVerification)
+}
+
 // cfBackoffMinutes returns the delay in minutes for Cloudflare block retries.
 // Uses exponential backoff: interval * 2^(n-1), capped at 30 minutes.
-func cfBackoffMinutes(consecutiveBlocks int, baseInterval int) int {
+// consecutiveBlocks must be >= 1.
+func cfBackoffMinutes(consecutiveBlocks, baseInterval int) int {
 	shift := min(consecutiveBlocks-1, 4) // max multiplier: 16x
-	if shift < 0 {
-		shift = 0
-	}
 	delay := baseInterval * (1 << shift)
-	if delay > 30 {
-		delay = 30
-	}
-	return delay
+	return min(delay, 30)
 }
 
 // HandleSegment processes and writes segment data to a file.
