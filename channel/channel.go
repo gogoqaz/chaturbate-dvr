@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"time"
 
@@ -168,8 +169,7 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 
 // CheckOnlineWhilePaused periodically checks if the channel is online while paused.
 // startSeq staggers the initial check: waits startSeq*5 seconds before first check,
-// then continues checking every 10 minutes as a background fallback.
-// Status is also refreshed on-demand when the user loads the web page (see RefreshStatus).
+// then continues checking every 10 minutes with random jitter to spread out API calls.
 func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
 	client := chaturbate.NewClient()
 
@@ -182,10 +182,11 @@ func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
 	for {
 		ch.fetchAndUpdateStatus(ctx, client)
 
+		jitter := time.Duration(rand.Intn(120)) * time.Second
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(10 * time.Minute):
+		case <-time.After(10*time.Minute + jitter):
 		}
 	}
 }
