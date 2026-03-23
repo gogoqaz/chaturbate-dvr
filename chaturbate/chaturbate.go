@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -316,7 +317,14 @@ func (p *Playlist) WatchAVSegments(ctx context.Context, handler WatchHandler, in
 			}
 		}
 
-		<-time.After(1 * time.Second) // time.Duration(playlist.TargetDuration)
+		// Use the playlist's target duration as the polling interval (minimum 2s)
+		// with random jitter to avoid synchronized requests across channels.
+		interval := time.Duration(playlist.TargetDuration) * time.Second
+		if interval < 2*time.Second {
+			interval = 2 * time.Second
+		}
+		jitter := time.Duration(rand.Intn(500)) * time.Millisecond
+		<-time.After(interval + jitter)
 	}
 }
 
