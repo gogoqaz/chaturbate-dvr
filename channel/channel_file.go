@@ -117,13 +117,29 @@ func (ch *Channel) CreateNewFile(filename string) error {
 		return fmt.Errorf("mkdir all: %w", err)
 	}
 
+	// Use .mp4 for fMP4/LL-HLS streams, .ts for legacy HLS
+	ext := ".ts"
+	if len(ch.InitSegment) > 0 {
+		ext = ".mp4"
+	}
+
 	// Open the file in append mode, create it if it doesn't exist
-	file, err := os.OpenFile(filename+".ts", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+	file, err := os.OpenFile(filename+ext, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
 	if err != nil {
 		return fmt.Errorf("cannot open file: %s: %w", filename, err)
 	}
 
 	ch.File = file
+
+	// Write the init segment (moov atom) at the start of each fMP4 file
+	if len(ch.InitSegment) > 0 {
+		n, err := ch.File.Write(ch.InitSegment)
+		if err != nil {
+			return fmt.Errorf("write init segment: %w", err)
+		}
+		ch.Filesize += n
+	}
+
 	return nil
 }
 

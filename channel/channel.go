@@ -29,8 +29,9 @@ type Channel struct {
 
 	Logs []string
 
-	File   *os.File
-	Config *entity.ChannelConfig
+	File        *os.File
+	Config      *entity.ChannelConfig
+	InitSegment []byte // fMP4 init segment (moov atom) for LL-HLS streams
 }
 
 // New creates a new channel instance with the given manager and configuration.

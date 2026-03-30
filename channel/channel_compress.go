@@ -66,37 +66,38 @@ func getEncoder() videoEncoder {
 	return availableEncoders[len(availableEncoders)-1]
 }
 
-// CompressFile compresses a .ts file to .mkv format using ffmpeg in the background.
+// CompressFile compresses a video file (.ts or .mp4) to .mkv format using ffmpeg in the background.
 // Uses hardware GPU encoding if available, falls back to CPU (libx264).
-// After successful compression, the original .ts file is deleted.
-func (ch *Channel) CompressFile(tsPath string) {
+// After successful compression, the original file is deleted.
+func (ch *Channel) CompressFile(srcPath string) {
 	go func() {
-		mkvPath := strings.TrimSuffix(tsPath, ".ts") + ".mkv"
-		tsFilename := filepath.Base(tsPath)
+		ext := filepath.Ext(srcPath)
+		mkvPath := strings.TrimSuffix(srcPath, ext) + ".mkv"
+		srcFilename := filepath.Base(srcPath)
 		mkvFilename := filepath.Base(mkvPath)
 
 		// Get original file size
-		tsInfo, err := os.Stat(tsPath)
+		srcInfo, err := os.Stat(srcPath)
 		if err != nil {
 			ch.Error("compress: failed to stat file: %s", err.Error())
 			return
 		}
-		tsSize := tsInfo.Size()
+		srcSize := srcInfo.Size()
 
 		// Get the best available encoder
 		encoder := getEncoder()
 
-		ch.Info("compress: encoding %s (%s) using %s", tsFilename, internal.FormatFilesize(int(tsSize)), encoder.name)
+		ch.Info("compress: encoding %s (%s) using %s", srcFilename, internal.FormatFilesize(int(srcSize)), encoder.name)
 
 		// Build ffmpeg command
-		args := []string{"-y", "-i", tsPath, "-c:v", encoder.codec}
+		args := []string{"-y", "-i", srcPath, "-c:v", encoder.codec}
 		args = append(args, encoder.args...)
 		args = append(args, "-c:a", "aac", "-b:a", "128k", mkvPath)
 
 		cmd := exec.Command("ffmpeg", args...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			ch.Error("compress: failed %s - %s", tsFilename, err.Error())
+			ch.Error("compress: failed %s - %s", srcFilename, err.Error())
 			if len(output) > 0 {
 				// Only show last 500 chars of ffmpeg output to avoid flooding logs
 				outStr := string(output)
@@ -117,14 +118,14 @@ func (ch *Channel) CompressFile(tsPath string) {
 		mkvSize := mkvInfo.Size()
 
 		// Calculate compression ratio
-		ratio := float64(mkvSize) / float64(tsSize) * 100
+		ratio := float64(mkvSize) / float64(srcSize) * 100
 
-		// Delete the original .ts file after successful compression
-		if err := os.Remove(tsPath); err != nil {
-			ch.Error("compress: failed to delete %s - %s", tsFilename, err.Error())
+		// Delete the original file after successful compression
+		if err := os.Remove(srcPath); err != nil {
+			ch.Error("compress: failed to delete %s - %s", srcFilename, err.Error())
 			return
 		}
 
-		ch.Info("compress: done %s -> %s (%s, %.1f%%)", tsFilename, mkvFilename, internal.FormatFilesize(int(mkvSize)), ratio)
+		ch.Info("compress: done %s -> %s (%s, %.1f%%)", srcFilename, mkvFilename, internal.FormatFilesize(int(mkvSize)), ratio)
 	}()
 }

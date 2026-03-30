@@ -274,8 +274,11 @@ func resolveURL(baseURL, ref string) string {
 // WatchHandler is a function type that processes video segments.
 type WatchHandler func(b []byte, duration float64) error
 
+// InitHandler is called once when an init segment (fMP4 moov atom) is detected.
+type InitHandler func(initData []byte)
+
 // WatchSegments continuously fetches and processes video segments.
-func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler) error {
+func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler, initHandler InitHandler) error {
 	var (
 		client      = internal.NewReq()
 		lastSeq     = -1
@@ -312,8 +315,8 @@ func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler) erro
 			if initErr != nil {
 				return fmt.Errorf("fetch init segment: %w", initErr)
 			}
-			if err := handler(initData, 0); err != nil {
-				return fmt.Errorf("handler init: %w", err)
+			if initHandler != nil {
+				initHandler(initData)
 			}
 			initWritten = true
 		}

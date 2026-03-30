@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -86,6 +89,7 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 	}
 	ch.StreamedAt = time.Now().Unix()
 	ch.Sequence = 0
+	ch.InitSegment = nil
 
 	if err := ch.NextFile(); err != nil {
 		return fmt.Errorf("next file: %w", err)
@@ -107,7 +111,42 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 
 	ch.Info("stream quality - resolution %dp (target: %dp), framerate %dfps (target: %dfps)", playlist.Resolution, ch.Config.Resolution, playlist.Framerate, ch.Config.Framerate)
 
-	return playlist.WatchSegments(ctx, ch.HandleSegment)
+	return playlist.WatchSegments(ctx, ch.HandleSegment, ch.HandleInitSegment)
+}
+
+// HandleInitSegment stores the fMP4 init segment and reopens the file with the correct extension.
+func (ch *Channel) HandleInitSegment(initData []byte) {
+	ch.InitSegment = initData
+
+	if ch.File == nil {
+		return
+	}
+
+	oldName := ch.File.Name()
+	if err := ch.File.Close(); err != nil {
+		ch.Error("close file for rename: %s", err.Error())
+		return
+	}
+
+	newName := strings.TrimSuffix(oldName, filepath.Ext(oldName)) + ".mp4"
+	if err := os.Rename(oldName, newName); err != nil {
+		ch.Error("rename file to mp4: %s", err.Error())
+		return
+	}
+
+	file, err := os.OpenFile(newName, os.O_APPEND|os.O_WRONLY, 0777)
+	if err != nil {
+		ch.Error("reopen file as mp4: %s", err.Error())
+		return
+	}
+	ch.File = file
+
+	n, err := ch.File.Write(initData)
+	if err != nil {
+		ch.Error("write init segment: %s", err.Error())
+		return
+	}
+	ch.Filesize += n
 }
 
 // HandleSegment processes and writes segment data to a file.
