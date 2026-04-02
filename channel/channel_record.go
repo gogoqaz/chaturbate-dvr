@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -84,8 +87,16 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 	if err != nil {
 		return fmt.Errorf("get stream: %w", err)
 	}
+	playlist, err := stream.GetPlaylist(ctx, ch.Config.Resolution, ch.Config.Framerate)
+	if err != nil {
+		return fmt.Errorf("get playlist: %w", err)
+	}
+
 	ch.StreamedAt = time.Now().Unix()
 	ch.Sequence = 0
+	ch.InitSegment = nil
+	ch.AudioInitSegment = nil
+	ch.HasSeparateAudio = playlist.AudioPlaylistURL != ""
 
 	if err := ch.NextFile(); err != nil {
 		return fmt.Errorf("next file: %w", err)
@@ -98,16 +109,87 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 		}
 	}()
 
-	playlist, err := stream.GetPlaylist(ctx, ch.Config.Resolution, ch.Config.Framerate)
-	if err != nil {
-		return fmt.Errorf("get playlist: %w", err)
-	}
 	ch.RoomStatus = chaturbate.StatusPublic
 	ch.UpdateOnlineStatus(true) // after GetPlaylist succeeds
 
 	ch.Info("stream quality - resolution %dp (target: %dp), framerate %dfps (target: %dfps)", playlist.Resolution, ch.Config.Resolution, playlist.Framerate, ch.Config.Framerate)
+	if ch.HasSeparateAudio {
+		ch.Info("detected separate audio rendition, recording and muxing audio/video streams")
+	}
 
-	return playlist.WatchSegments(ctx, ch.HandleSegment)
+	return playlist.WatchAVSegments(ctx, ch.HandleSegment, ch.HandleInitSegment, ch.HandleAudioSegment, ch.HandleAudioInitSegment)
+}
+
+// HandleInitSegment stores the fMP4 init segment and reopens the file with the correct extension.
+func (ch *Channel) HandleInitSegment(initData []byte) error {
+	ch.InitSegment = initData
+
+	if ch.File == nil {
+		return nil
+	}
+
+	oldName := ch.File.Name()
+	if err := ch.File.Close(); err != nil {
+		return fmt.Errorf("close file for rename: %w", err)
+	}
+	ch.File = nil
+
+	newName := strings.TrimSuffix(oldName, filepath.Ext(oldName)) + ".mp4"
+	if err := os.Rename(oldName, newName); err != nil {
+		return fmt.Errorf("rename file to mp4: %w", err)
+	}
+
+	file, err := os.OpenFile(newName, os.O_APPEND|os.O_WRONLY, 0777)
+	if err != nil {
+		_ = os.Remove(newName)
+		return fmt.Errorf("reopen file as mp4: %w", err)
+	}
+	ch.File = file
+
+	n, err := ch.File.Write(initData)
+	if err != nil {
+		_ = ch.File.Close()
+		ch.File = nil
+		_ = os.Remove(newName)
+		return fmt.Errorf("write init segment: %w", err)
+	}
+	ch.Filesize += n
+	return nil
+}
+
+// HandleAudioInitSegment stores the fMP4 audio init segment and reopens the audio file with the correct extension.
+func (ch *Channel) HandleAudioInitSegment(initData []byte) error {
+	ch.AudioInitSegment = initData
+
+	if ch.AudioFile == nil {
+		return nil
+	}
+
+	oldName := ch.AudioFile.Name()
+	if err := ch.AudioFile.Close(); err != nil {
+		return fmt.Errorf("close audio file for rename: %w", err)
+	}
+	ch.AudioFile = nil
+
+	newName := strings.TrimSuffix(oldName, filepath.Ext(oldName)) + ".mp4"
+	if err := os.Rename(oldName, newName); err != nil {
+		return fmt.Errorf("rename audio file to mp4: %w", err)
+	}
+
+	file, err := os.OpenFile(newName, os.O_APPEND|os.O_WRONLY, 0777)
+	if err != nil {
+		_ = os.Remove(newName)
+		return fmt.Errorf("reopen audio file as mp4: %w", err)
+	}
+	ch.AudioFile = file
+
+	if _, err := ch.AudioFile.Write(initData); err != nil {
+		_ = ch.AudioFile.Close()
+		ch.AudioFile = nil
+		_ = os.Remove(newName)
+		return fmt.Errorf("write audio init segment: %w", err)
+	}
+	return nil
 }
 
 // HandleSegment processes and writes segment data to a file.
@@ -134,6 +216,21 @@ func (ch *Channel) HandleSegment(b []byte, duration float64) error {
 		}
 		ch.Info("max filesize or duration exceeded, new file created: %s", ch.File.Name())
 		return nil
+	}
+	return nil
+}
+
+// HandleAudioSegment processes and writes audio segment data to a sidecar file.
+func (ch *Channel) HandleAudioSegment(b []byte, _ float64) error {
+	if ch.AudioFile == nil {
+		return nil
+	}
+	if ch.Config.IsPaused {
+		return retry.Unrecoverable(internal.ErrPaused)
+	}
+
+	if _, err := ch.AudioFile.Write(b); err != nil {
+		return fmt.Errorf("write audio file: %w", err)
 	}
 	return nil
 }

@@ -99,7 +99,7 @@ Available options:
 --cookies value             Cookies to use in the request (format: key=value; key2=value2)
 --user-agent value          Custom User-Agent for the request
 --domain value              Chaturbate domain to use (default: "https://chaturbate.global/")
---compress                  Compress .ts to .mkv after recording (auto-enabled if ffmpeg installed)
+--compress                  Compress recorded .ts or .mp4 files to .mkv after recording (auto-enabled if ffmpeg installed)
 --help, -h                  show help
 --version, -v               print the version
 ```
@@ -192,7 +192,7 @@ Default it hides the sequence if it's zero.
 
 ```
 Pattern: {{.Username}}_{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}{{if .Sequence}}_{{.Sequence}}{{end}}
- Output: yamiodymel_2024-01-02_13-45-00.ts    # Sequence won't be shown if it's zero.
+ Output: yamiodymel_2024-01-02_13-45-00.ts    # Legacy HLS output
  Output: yamiodymel_2024-01-02_13-45-00_1.ts
 ```
 
@@ -211,7 +211,7 @@ Pattern: video/{{.Username}}/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}
  Output: video/yamiodymel/2024-01-02_13-45-00_0.ts
 ```
 
-_Note: Files are saved in `.ts` format, and this is not configurable._
+_Note: output format follows the stream container: legacy HLS is saved as `.ts`, LL-HLS/fMP4 is saved as `.mp4`._
 
 &nbsp;
 

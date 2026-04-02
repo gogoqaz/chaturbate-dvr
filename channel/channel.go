@@ -29,8 +29,13 @@ type Channel struct {
 
 	Logs []string
 
-	File   *os.File
-	Config *entity.ChannelConfig
+	File             *os.File
+	AudioFile        *os.File
+	Config           *entity.ChannelConfig
+	CurrentFilename  string
+	InitSegment      []byte // fMP4 video init segment for LL-HLS streams
+	AudioInitSegment []byte // fMP4 audio init segment for LL-HLS streams
+	HasSeparateAudio bool
 }
 
 // New creates a new channel instance with the given manager and configuration.
@@ -90,7 +95,9 @@ func (ch *Channel) Error(format string, a ...any) {
 // ExportInfo exports the channel information as a ChannelInfo struct.
 func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	var filename string
-	if ch.File != nil {
+	if ch.CurrentFilename != "" && ch.HasSeparateAudio {
+		filename = ch.CurrentFilename + ".mp4"
+	} else if ch.File != nil {
 		filename = ch.File.Name()
 	}
 	var streamedAt string

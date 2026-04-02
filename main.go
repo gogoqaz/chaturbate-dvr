@@ -104,7 +104,7 @@ func main() {
 			},
 			&cli.BoolFlag{
 				Name:  "compress",
-				Usage: "Compress .ts files to .mkv using ffmpeg after recording (auto-enabled if ffmpeg is installed)",
+				Usage: "Compress recorded files (.ts or .mp4) to .mkv using ffmpeg after recording (auto-enabled if ffmpeg is installed)",
 				Value: false,
 			},
 		},

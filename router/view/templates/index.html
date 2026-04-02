@@ -240,7 +240,7 @@
                             <input type="checkbox" name="compress" value="true" {{ if .Config.Compress }}checked{{ end }} class="accent-zinc-900" />
                             Compress to MKV after recording (requires ffmpeg)
                         </label>
-                        <p class="text-xs text-zinc-400 mt-1 ml-6">Convert .ts files to .mkv format using stream copy. Original .ts files will be deleted.</p>
+                        <p class="text-xs text-zinc-400 mt-1 ml-6">Convert recorded .ts or .mp4 files to .mkv with ffmpeg. Original source files will be deleted.</p>
                     </div>
                 </div>
                 <div class="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100">
