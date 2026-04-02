@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -40,7 +41,8 @@ type APIResponse struct {
 
 // Client represents an API client for interacting with Chaturbate.
 type Client struct {
-	Req *internal.Req
+	Req            *internal.Req
+	LastRoomStatus string // cached from the most recent API call
 }
 
 // NewClient initializes and returns a new Client instance.
@@ -51,27 +53,23 @@ func NewClient() *Client {
 }
 
 // GetStream fetches the stream information for a given username.
+// The room status is cached in Client.LastRoomStatus.
 func (c *Client) GetStream(ctx context.Context, username string) (*Stream, error) {
-	return FetchStream(ctx, c.Req, username)
+	stream, roomStatus, err := FetchStream(ctx, c.Req, username)
+	c.LastRoomStatus = roomStatus
+	return stream, err
 }
 
 // GetRoomStatus returns the room status string (public, private, away, offline, etc.)
-func (c *Client) GetRoomStatus(ctx context.Context, username string) string {
-	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, username)
-	body, err := c.Req.Get(ctx, apiURL)
+func (c *Client) GetRoomStatus(ctx context.Context, username string) (string, error) {
+	resp, err := fetchAPIResponse(ctx, c.Req, username)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	var resp APIResponse
-	if err := json.Unmarshal([]byte(body), &resp); err != nil {
-		return ""
-	}
-	return resp.RoomStatus
+	return resp.RoomStatus, nil
 }
 
-// FetchStream retrieves the streaming data using the Chaturbate API.
-func FetchStream(ctx context.Context, client *internal.Req, username string) (*Stream, error) {
-	// Call /api/chatvideocontext/{username}/
+func fetchAPIResponse(ctx context.Context, client *internal.Req, username string) (*APIResponse, error) {
 	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, username)
 	body, err := client.Get(ctx, apiURL)
 	if err != nil {
@@ -83,25 +81,36 @@ func FetchStream(ctx context.Context, client *internal.Req, username string) (*S
 		return nil, fmt.Errorf("failed to parse API response: %w", err)
 	}
 
+	return &resp, nil
+}
+
+// FetchStream retrieves the streaming data using the Chaturbate API.
+// Returns the stream, the room status string, and any error.
+func FetchStream(ctx context.Context, client *internal.Req, username string) (*Stream, string, error) {
+	resp, err := fetchAPIResponse(ctx, client, username)
+	if err != nil {
+		return nil, "", err
+	}
+
 	// Handle room status
 	switch resp.RoomStatus {
 	case StatusPrivate:
-		return nil, internal.ErrPrivateStream
+		return nil, resp.RoomStatus, internal.ErrPrivateStream
 	case StatusAway, StatusOffline:
-		return nil, internal.ErrChannelOffline
+		return nil, resp.RoomStatus, internal.ErrChannelOffline
 	}
 
 	if resp.HLSSource == "" {
-		return nil, internal.ErrChannelOffline
+		return nil, resp.RoomStatus, internal.ErrChannelOffline
 	}
 
 	// Find working edge URL (geo-blocking fallback)
 	workingURL, err := findWorkingEdgeURL(ctx, client, resp.HLSSource)
 	if err != nil {
-		return nil, err
+		return nil, resp.RoomStatus, err
 	}
 
-	return &Stream{HLSSource: workingURL}, nil
+	return &Stream{HLSSource: workingURL}, resp.RoomStatus, nil
 }
 
 // findWorkingEdgeURL validates the HLS URL and tries alternative edge regions if geo-blocked.
@@ -307,31 +316,61 @@ func (p *Playlist) WatchAVSegments(ctx context.Context, handler WatchHandler, in
 	)
 
 	for {
-		if err := p.processMediaPlaylist(ctx, client, p.PlaylistURL, handler, initHandler, &lastSeq, &initWritten); err != nil {
+		pollInterval, err := p.processMediaPlaylist(ctx, client, p.PlaylistURL, handler, initHandler, &lastSeq, &initWritten)
+		if err != nil {
 			return fmt.Errorf("video: %w", err)
 		}
 		if p.AudioPlaylistURL != "" {
-			if err := p.processMediaPlaylist(ctx, client, p.AudioPlaylistURL, audioHandler, audioInitHandler, &audioLastSeq, &audioInitWritten); err != nil {
+			audioInterval, err := p.processMediaPlaylist(ctx, client, p.AudioPlaylistURL, audioHandler, audioInitHandler, &audioLastSeq, &audioInitWritten)
+			if err != nil {
 				return fmt.Errorf("audio: %w", err)
 			}
+			pollInterval = pickPollInterval(pollInterval, audioInterval)
 		}
 
-		<-time.After(1 * time.Second) // time.Duration(playlist.TargetDuration)
+		// Use the playlist's target duration as the polling interval (minimum 2s)
+		// with random jitter to avoid synchronized requests across channels.
+		if pollInterval < 2*time.Second {
+			pollInterval = 2 * time.Second
+		}
+		jitter := time.Duration(rand.Intn(500)) * time.Millisecond
+		timer := time.NewTimer(pollInterval + jitter)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 
-func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Req, playlistURL string, handler WatchHandler, initHandler InitHandler, lastSeq *int, initWritten *bool) error {
+func pickPollInterval(current, candidate time.Duration) time.Duration {
+	if current <= 0 {
+		return candidate
+	}
+	if candidate <= 0 {
+		return current
+	}
+	if candidate < current {
+		return candidate
+	}
+	return current
+}
+
+func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Req, playlistURL string, handler WatchHandler, initHandler InitHandler, lastSeq *int, initWritten *bool) (time.Duration, error) {
 	resp, err := client.Get(ctx, playlistURL)
 	if err != nil {
-		return fmt.Errorf("get playlist: %w", err)
+		return 0, fmt.Errorf("get playlist: %w", err)
 	}
 	pl, _, err := m3u8.DecodeFrom(strings.NewReader(resp), true)
 	if err != nil {
-		return fmt.Errorf("decode from: %w", err)
+		return 0, fmt.Errorf("decode from: %w", err)
 	}
 	playlist, ok := pl.(*m3u8.MediaPlaylist)
 	if !ok {
-		return fmt.Errorf("cast to media playlist")
+		return 0, fmt.Errorf("cast to media playlist")
 	}
 
 	if !*initWritten && playlist.Map != nil && playlist.Map.URI != "" {
@@ -346,11 +385,11 @@ func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Re
 			retry.DelayType(retry.FixedDelay),
 		)
 		if initErr != nil {
-			return fmt.Errorf("fetch init segment: %w", initErr)
+			return 0, fmt.Errorf("fetch init segment: %w", initErr)
 		}
 		if initHandler != nil {
 			if err := initHandler(initData); err != nil {
-				return fmt.Errorf("handler init: %w", err)
+				return 0, fmt.Errorf("handler init: %w", err)
 			}
 		}
 		*initWritten = true
@@ -381,10 +420,10 @@ func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Re
 		}
 		if handler != nil {
 			if err := handler(resp, v.Duration); err != nil {
-				return fmt.Errorf("handler: %w", err)
+				return 0, fmt.Errorf("handler: %w", err)
 			}
 		}
 	}
 
-	return nil
+	return time.Duration(playlist.TargetDuration) * time.Second, nil
 }

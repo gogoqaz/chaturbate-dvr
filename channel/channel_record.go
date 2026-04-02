@@ -34,29 +34,41 @@ func (ch *Channel) Monitor() {
 		pipeline := func() error {
 			return ch.RecordStream(ctx, client)
 		}
+
+		cfBlockCount := 0
+
 		onRetry := func(_ uint, err error) {
 			ch.UpdateOnlineStatus(false)
 
-			if errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream) {
-				if ctx.Err() == nil {
-					ch.RoomStatus = client.GetRoomStatus(ctx, ch.Config.Username)
-					ch.Update()
-				}
+			if isCFBlock(err) {
+				cfBlockCount++
+				delay := cfBackoffMinutes(cfBlockCount, server.Config.Interval)
+				ch.Info("blocked by Cloudflare (attempt %d); try with `-cookies` and `-user-agent`? try again in %d min(s)", cfBlockCount, delay)
+			} else if errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream) {
+				cfBlockCount = 0
+				ch.RoomStatus = client.LastRoomStatus
+				ch.Update()
 				ch.Info("channel is %s, try again in %d min(s)", ch.RoomStatus, server.Config.Interval)
-			} else if errors.Is(err, internal.ErrCloudflareBlocked) {
-				ch.Info("channel was blocked by Cloudflare; try with `-cookies` and `-user-agent`? try again in %d min(s)", server.Config.Interval)
 			} else if errors.Is(err, context.Canceled) {
-				// ...
+				cfBlockCount = 0
 			} else {
+				cfBlockCount = 0
 				ch.Error("on retry: %s: retrying in %d min(s)", err.Error(), server.Config.Interval)
 			}
 		}
+
+		customDelay := func(_ uint, err error, _ *retry.Config) time.Duration {
+			if isCFBlock(err) {
+				return time.Duration(cfBackoffMinutes(cfBlockCount, server.Config.Interval)) * time.Minute
+			}
+			return time.Duration(server.Config.Interval) * time.Minute
+		}
+
 		if err = retry.Do(
 			pipeline,
 			retry.Context(ctx),
 			retry.Attempts(0),
-			retry.Delay(time.Duration(server.Config.Interval)*time.Minute),
-			retry.DelayType(retry.FixedDelay),
+			retry.DelayType(customDelay),
 			retry.OnRetry(onRetry),
 		); err != nil {
 			break
@@ -190,6 +202,19 @@ func (ch *Channel) HandleAudioInitSegment(initData []byte) error {
 		return fmt.Errorf("write audio init segment: %w", err)
 	}
 	return nil
+}
+
+func isCFBlock(err error) bool {
+	return errors.Is(err, internal.ErrCloudflareBlocked) || errors.Is(err, internal.ErrAgeVerification)
+}
+
+// cfBackoffMinutes returns the delay in minutes for Cloudflare block retries.
+// Uses exponential backoff: interval * 2^(n-1), capped at 30 minutes.
+// consecutiveBlocks must be >= 1.
+func cfBackoffMinutes(consecutiveBlocks, baseInterval int) int {
+	shift := min(consecutiveBlocks-1, 4) // max multiplier: 16x
+	delay := baseInterval * (1 << shift)
+	return min(delay, 30)
 }
 
 // HandleSegment processes and writes segment data to a file.

@@ -75,7 +75,8 @@ func (m *Manager) LoadConfig() error {
 	}
 
 	pausedSeq := 0
-	for i, conf := range config {
+	seq := 0
+	for _, conf := range config {
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
 
@@ -87,7 +88,8 @@ func (m *Manager) LoadConfig() error {
 			pausedSeq++
 			continue
 		}
-		go ch.Resume(i)
+		go ch.Resume(seq)
+		seq++
 	}
 	return nil
 }
