@@ -184,16 +184,18 @@ func ParsePlaylist(resp, hlsSource string, resolution, framerate int) (*Playlist
 
 // Playlist represents an HLS playlist containing variant streams.
 type Playlist struct {
-	PlaylistURL string
-	RootURL     string
-	Resolution  int
-	Framerate   int
+	PlaylistURL      string
+	AudioPlaylistURL string
+	RootURL          string
+	Resolution       int
+	Framerate        int
 }
 
 // Resolution represents a video resolution and its corresponding framerate.
 type Resolution struct {
-	Framerate map[int]string // [framerate]url
-	Width     int
+	Framerate    map[int]string // [framerate]url
+	Width        int
+	Alternatives []*m3u8.Alternative
 }
 
 // PickPlaylist selects the best matching variant stream based on resolution and framerate.
@@ -215,7 +217,7 @@ func PickPlaylist(masterPlaylist *m3u8.MasterPlaylist, baseURL string, resolutio
 			framerateVal = 60
 		}
 		if _, exists := resolutions[width]; !exists {
-			resolutions[width] = &Resolution{Framerate: map[int]string{}, Width: width}
+			resolutions[width] = &Resolution{Framerate: map[int]string{}, Width: width, Alternatives: v.Alternatives}
 		}
 		resolutions[width].Framerate[framerateVal] = v.URI
 	}
@@ -239,6 +241,7 @@ func PickPlaylist(masterPlaylist *m3u8.MasterPlaylist, baseURL string, resolutio
 	var (
 		finalResolution = variant.Width
 		finalFramerate  = framerate
+		audioPlaylist   string
 	)
 	// Select the desired framerate, or fallback to the first available framerate
 	playlistURL, exists := variant.Framerate[framerate]
@@ -250,11 +253,22 @@ func PickPlaylist(masterPlaylist *m3u8.MasterPlaylist, baseURL string, resolutio
 		}
 	}
 
+	for _, alt := range variant.Alternatives {
+		if alt == nil || alt.Type != "AUDIO" || alt.URI == "" {
+			continue
+		}
+		audioPlaylist = resolveURL(baseURL, alt.URI)
+		if alt.Default {
+			break
+		}
+	}
+
 	return &Playlist{
-		PlaylistURL: resolveURL(baseURL, playlistURL),
-		RootURL:     baseURL,
-		Resolution:  finalResolution,
-		Framerate:   finalFramerate,
+		PlaylistURL:      resolveURL(baseURL, playlistURL),
+		AudioPlaylistURL: audioPlaylist,
+		RootURL:          baseURL,
+		Resolution:       finalResolution,
+		Framerate:        finalFramerate,
 	}, nil
 }
 
@@ -275,86 +289,102 @@ func resolveURL(baseURL, ref string) string {
 type WatchHandler func(b []byte, duration float64) error
 
 // InitHandler is called once when an init segment (fMP4 moov atom) is detected.
-type InitHandler func(initData []byte)
+type InitHandler func(initData []byte) error
 
 // WatchSegments continuously fetches and processes video segments.
 func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler, initHandler InitHandler) error {
+	return p.WatchAVSegments(ctx, handler, initHandler, nil, nil)
+}
+
+// WatchAVSegments continuously fetches and processes video segments, and optional separate audio segments.
+func (p *Playlist) WatchAVSegments(ctx context.Context, handler WatchHandler, initHandler InitHandler, audioHandler WatchHandler, audioInitHandler InitHandler) error {
 	var (
-		client      = internal.NewReq()
-		lastSeq     = -1
-		initWritten = false
+		client           = internal.NewReq()
+		lastSeq          = -1
+		initWritten      = false
+		audioLastSeq     = -1
+		audioInitWritten = false
 	)
 
 	for {
-		// Fetch the latest playlist
-		resp, err := client.Get(ctx, p.PlaylistURL)
-		if err != nil {
-			return fmt.Errorf("get playlist: %w", err)
+		if err := p.processMediaPlaylist(ctx, client, p.PlaylistURL, handler, initHandler, &lastSeq, &initWritten); err != nil {
+			return fmt.Errorf("video: %w", err)
 		}
-		pl, _, err := m3u8.DecodeFrom(strings.NewReader(resp), true)
-		if err != nil {
-			return fmt.Errorf("decode from: %w", err)
-		}
-		playlist, ok := pl.(*m3u8.MediaPlaylist)
-		if !ok {
-			return fmt.Errorf("cast to media playlist")
-		}
-
-		// Handle init segment for fMP4/LL-HLS format (EXT-X-MAP)
-		if !initWritten && playlist.Map != nil && playlist.Map.URI != "" {
-			initURL := resolveURL(p.PlaylistURL, playlist.Map.URI)
-			initData, initErr := retry.DoWithData(
-				func() ([]byte, error) {
-					return client.GetBytes(ctx, initURL)
-				},
-				retry.Context(ctx),
-				retry.Attempts(3),
-				retry.Delay(600*time.Millisecond),
-				retry.DelayType(retry.FixedDelay),
-			)
-			if initErr != nil {
-				return fmt.Errorf("fetch init segment: %w", initErr)
-			}
-			if initHandler != nil {
-				initHandler(initData)
-			}
-			initWritten = true
-		}
-
-		// Process new segments
-		for _, v := range playlist.Segments {
-			if v == nil {
-				continue
-			}
-			seq := internal.SegmentSeq(v.URI)
-			if seq == -1 || seq <= lastSeq {
-				continue
-			}
-			lastSeq = seq
-
-			// Fetch segment data with retry mechanism
-			segmentURL := resolveURL(p.PlaylistURL, v.URI)
-			pipeline := func() ([]byte, error) {
-				return client.GetBytes(ctx, segmentURL)
-			}
-
-			resp, err := retry.DoWithData(
-				pipeline,
-				retry.Context(ctx),
-				retry.Attempts(3),
-				retry.Delay(600*time.Millisecond),
-				retry.DelayType(retry.FixedDelay),
-			)
-			if err != nil {
-				break
-			}
-
-			// Process the segment using the provided handler
-			if err := handler(resp, v.Duration); err != nil {
-				return fmt.Errorf("handler: %w", err)
+		if p.AudioPlaylistURL != "" {
+			if err := p.processMediaPlaylist(ctx, client, p.AudioPlaylistURL, audioHandler, audioInitHandler, &audioLastSeq, &audioInitWritten); err != nil {
+				return fmt.Errorf("audio: %w", err)
 			}
 		}
 
 		<-time.After(1 * time.Second) // time.Duration(playlist.TargetDuration)
 	}
+}
+
+func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Req, playlistURL string, handler WatchHandler, initHandler InitHandler, lastSeq *int, initWritten *bool) error {
+	resp, err := client.Get(ctx, playlistURL)
+	if err != nil {
+		return fmt.Errorf("get playlist: %w", err)
+	}
+	pl, _, err := m3u8.DecodeFrom(strings.NewReader(resp), true)
+	if err != nil {
+		return fmt.Errorf("decode from: %w", err)
+	}
+	playlist, ok := pl.(*m3u8.MediaPlaylist)
+	if !ok {
+		return fmt.Errorf("cast to media playlist")
+	}
+
+	if !*initWritten && playlist.Map != nil && playlist.Map.URI != "" {
+		initURL := resolveURL(playlistURL, playlist.Map.URI)
+		initData, initErr := retry.DoWithData(
+			func() ([]byte, error) {
+				return client.GetBytes(ctx, initURL)
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
+			retry.Delay(600*time.Millisecond),
+			retry.DelayType(retry.FixedDelay),
+		)
+		if initErr != nil {
+			return fmt.Errorf("fetch init segment: %w", initErr)
+		}
+		if initHandler != nil {
+			if err := initHandler(initData); err != nil {
+				return fmt.Errorf("handler init: %w", err)
+			}
+		}
+		*initWritten = true
+	}
+
+	for _, v := range playlist.Segments {
+		if v == nil {
+			continue
+		}
+		seq := internal.SegmentSeq(v.URI)
+		if seq == -1 || seq <= *lastSeq {
+			continue
+		}
+		*lastSeq = seq
+
+		segmentURL := resolveURL(playlistURL, v.URI)
+		resp, err := retry.DoWithData(
+			func() ([]byte, error) {
+				return client.GetBytes(ctx, segmentURL)
+			},
+			retry.Context(ctx),
+			retry.Attempts(3),
+			retry.Delay(600*time.Millisecond),
+			retry.DelayType(retry.FixedDelay),
+		)
+		if err != nil {
+			break
+		}
+		if handler != nil {
+			if err := handler(resp, v.Duration); err != nil {
+				return fmt.Errorf("handler: %w", err)
+			}
+		}
+	}
+
+	return nil
 }

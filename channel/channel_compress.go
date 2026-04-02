@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,9 @@ var (
 
 // videoEncoder represents a video encoder configuration
 type videoEncoder struct {
-	name   string   // display name
-	codec  string   // ffmpeg codec name
-	args   []string // additional encoder arguments
+	name  string   // display name
+	codec string   // ffmpeg codec name
+	args  []string // additional encoder arguments
 }
 
 // availableEncoders lists GPU encoders in priority order, with CPU fallback last
@@ -128,4 +129,33 @@ func (ch *Channel) CompressFile(srcPath string) {
 
 		ch.Info("compress: done %s -> %s (%s, %.1f%%)", srcFilename, mkvFilename, internal.FormatFilesize(int(mkvSize)), ratio)
 	}()
+}
+
+// MuxAV combines separate video and audio source files into a single MP4 container.
+func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
+	args := []string{
+		"-y",
+		"-i", videoPath,
+		"-i", audioPath,
+		"-map", "0:v:0",
+		"-map", "1:a:0",
+		"-c", "copy",
+		outputPath,
+	}
+
+	cmd := exec.Command("ffmpeg", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) > 0 {
+			outStr := string(output)
+			if len(outStr) > 500 {
+				outStr = outStr[len(outStr)-500:]
+			}
+			ch.Error("mux: ffmpeg: %s", outStr)
+		}
+		return fmt.Errorf("mux audio/video: %w", err)
+	}
+
+	ch.Info("mux: combined %s + %s -> %s", filepath.Base(videoPath), filepath.Base(audioPath), filepath.Base(outputPath))
+	return nil
 }
