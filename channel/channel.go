@@ -2,11 +2,13 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"github.com/teacat/chaturbate-dvr/chaturbate"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/internal"
 	"github.com/teacat/chaturbate-dvr/server"
@@ -14,9 +16,10 @@ import (
 
 // Channel represents a channel instance.
 type Channel struct {
-	CancelFunc context.CancelFunc
-	LogCh      chan string
-	UpdateCh   chan bool
+	CancelFunc      context.CancelFunc
+	PauseCancelFunc context.CancelFunc
+	LogCh           chan string
+	UpdateCh        chan bool
 
 	IsOnline   bool
 	RoomStatus string // public, private, group, away, offline
@@ -39,10 +42,11 @@ type Channel struct {
 // New creates a new channel instance with the given manager and configuration.
 func New(conf *entity.ChannelConfig) *Channel {
 	ch := &Channel{
-		LogCh:      make(chan string),
-		UpdateCh:   make(chan bool),
-		Config:     conf,
-		CancelFunc: func() {},
+		LogCh:           make(chan string),
+		UpdateCh:        make(chan bool),
+		Config:          conf,
+		CancelFunc:      func() {},
+		PauseCancelFunc: func() {},
 	}
 	go ch.Publisher()
 
@@ -127,11 +131,16 @@ func (ch *Channel) Pause() {
 	ch.Config.IsPaused = true
 	ch.Update()
 	ch.Info("channel paused")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch.PauseCancelFunc = cancel
+	go ch.CheckOnlineWhilePaused(ctx, 0)
 }
 
 // Stop stops the channel and cancels the context.
 func (ch *Channel) Stop() {
 	ch.CancelFunc()
+	ch.PauseCancelFunc()
 	ch.Info("channel stopped")
 }
 
@@ -140,6 +149,7 @@ func (ch *Channel) Stop() {
 // `startSeq` is used to prevent all channels from starting at the same time, preventing TooManyRequests errors.
 // It's only be used when program starting and trying to resume all channels at once.
 func (ch *Channel) Resume(startSeq int) {
+	ch.PauseCancelFunc()
 	ch.Config.IsPaused = false
 
 	ch.Update()
@@ -155,3 +165,61 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 	ch.Update()
 }
 
+// CheckOnlineWhilePaused periodically refreshes room status for paused channels
+// so the UI can still distinguish online/private/offline states.
+func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
+	client := chaturbate.NewClient()
+	baseIntervalMinutes := max(server.Config.Interval, 15)
+	cfBlockCount := 0
+
+	initialDelay := time.Duration(startSeq*5) * time.Second
+	if initialDelay > 0 {
+		timer := time.NewTimer(initialDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		case <-timer.C:
+		}
+	}
+
+	for {
+		waitInterval := time.Duration(baseIntervalMinutes) * time.Minute
+
+		status, err := client.GetRoomStatus(ctx, ch.Config.Username)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			if isCFBlock(err) {
+				cfBlockCount++
+				delayMinutes := cfBackoffMinutes(cfBlockCount, baseIntervalMinutes)
+				waitInterval = time.Duration(delayMinutes) * time.Minute
+				ch.Info("paused status check blocked by Cloudflare (attempt %d); retry in %d min(s)", cfBlockCount, delayMinutes)
+			} else {
+				cfBlockCount = 0
+			}
+		} else if status != "" {
+			cfBlockCount = 0
+			isOnline := status != chaturbate.StatusAway && status != chaturbate.StatusOffline
+			if ch.IsOnline != isOnline || ch.RoomStatus != status {
+				ch.IsOnline = isOnline
+				ch.RoomStatus = status
+				ch.Info("channel status: %s (paused)", status)
+				ch.Update()
+			}
+		}
+
+		timer := time.NewTimer(waitInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		case <-timer.C:
+		}
+	}
+}

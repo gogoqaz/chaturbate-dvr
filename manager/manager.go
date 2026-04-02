@@ -2,6 +2,7 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -73,6 +74,7 @@ func (m *Manager) LoadConfig() error {
 		return fmt.Errorf("unmarshal: %w", err)
 	}
 
+	pausedSeq := 0
 	seq := 0
 	for _, conf := range config {
 		ch := channel.New(conf)
@@ -80,6 +82,10 @@ func (m *Manager) LoadConfig() error {
 
 		if ch.Config.IsPaused {
 			ch.Info("channel was paused, waiting for resume")
+			ctx, cancel := context.WithCancel(context.Background())
+			ch.PauseCancelFunc = cancel
+			go ch.CheckOnlineWhilePaused(ctx, pausedSeq)
+			pausedSeq++
 			continue
 		}
 		go ch.Resume(seq)
