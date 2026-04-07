@@ -207,6 +207,14 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) err
 		return fmt.Errorf("load audio track: %w", err)
 	}
 
+	// Combine fragments BEFORE reassigning track IDs — GetFullSamples
+	// matches source traf boxes by trex.TrackID, which must still hold
+	// the original value from the source file.
+	segments, err := combineTrackFragments(collectFragments(videoFile), videoTrex, collectFragments(audioFile), audioTrex)
+	if err != nil {
+		return err
+	}
+
 	ftyp := videoFile.Init.Ftyp
 	moov := videoFile.Init.Moov
 	if len(moov.Traks) != 1 || moov.Mvex == nil || len(moov.Mvex.Trexs) != 1 {
@@ -226,11 +234,6 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) err
 	out := mp4.NewFile()
 	out.AddChild(ftyp, 0)
 	out.AddChild(moov, ftyp.Size())
-
-	segments, err := combineTrackFragments(collectFragments(videoFile), videoTrex, collectFragments(audioFile), audioTrex)
-	if err != nil {
-		return err
-	}
 	for _, segment := range segments {
 		out.AddMediaSegment(segment)
 	}

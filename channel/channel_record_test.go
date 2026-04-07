@@ -145,7 +145,8 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 		t.Fatalf("Cleanup() error = %v", err)
 	}
 
-	info, err := os.Stat(base + ".mp4")
+	outputPath := base + ".mp4"
+	info, err := os.Stat(outputPath)
 	if err != nil {
 		t.Fatalf("expected final mp4, stat err = %v", err)
 	}
@@ -157,6 +158,15 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	}
 	if _, err := os.Stat(base + ".audio.mp4"); !os.IsNotExist(err) {
 		t.Fatalf("expected audio sidecar removed, stat err = %v", err)
+	}
+
+	// Verify the muxed output contains both video and audio tracks
+	muxed, err := mp4.ReadMP4File(outputPath)
+	if err != nil {
+		t.Fatalf("ReadMP4File() error = %v", err)
+	}
+	if len(muxed.Init.Moov.Traks) != 2 {
+		t.Fatalf("expected 2 tracks in muxed output, got %d", len(muxed.Init.Moov.Traks))
 	}
 }
 
