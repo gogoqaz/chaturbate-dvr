@@ -81,7 +81,10 @@ func (ch *Channel) Cleanup() error {
 
 		finalOutput := currentFilename + ".mp4"
 		if err := ch.MuxAV(videoFilename, audioFilename, finalOutput); err != nil {
-			return err
+			ch.Info("mux: ffmpeg mux failed, trying native fallback: %s", err.Error())
+			if nativeErr := ch.MuxAVNative(videoFilename, audioFilename, finalOutput); nativeErr != nil {
+				return fmt.Errorf("mux audio/video: %w", nativeErr)
+			}
 		}
 		_ = os.Remove(videoFilename)
 		_ = os.Remove(audioFilename)
