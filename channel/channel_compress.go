@@ -140,6 +140,8 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 		"-map", "0:v:0",
 		"-map", "1:a:0",
 		"-c", "copy",
+		"-copyts",
+		"-avoid_negative_ts", "make_zero",
 		outputPath,
 	}
 
