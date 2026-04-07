@@ -1,11 +1,13 @@
 package channel
 
 import (
+	"bytes"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/server"
 )
@@ -84,9 +86,46 @@ func TestCreateNewFileWritesInitSegmentForRotatedFMP4Files(t *testing.T) {
 	}
 }
 
+// buildFragmentedMP4 creates a minimal valid fragmented MP4 in memory with one track and one sample.
+func buildFragmentedMP4(t *testing.T, mediaType string, timescale uint32, sampleData []byte) []byte {
+	t.Helper()
+
+	init := mp4.CreateEmptyInit()
+	init.AddEmptyTrack(timescale, mediaType, "und")
+	if err := init.TweakSingleTrakLive(); err != nil {
+		t.Fatalf("TweakSingleTrakLive(%s) error = %v", mediaType, err)
+	}
+
+	seg := mp4.NewMediaSegmentWithoutStyp()
+	frag, err := mp4.CreateFragment(1, 1)
+	if err != nil {
+		t.Fatalf("CreateFragment(%s) error = %v", mediaType, err)
+	}
+	if err := frag.AddFullSampleToTrack(mp4.FullSample{
+		Sample:     mp4.Sample{Flags: mp4.SyncSampleFlags, Dur: timescale, Size: uint32(len(sampleData))},
+		DecodeTime: 0,
+		Data:       sampleData,
+	}, 1); err != nil {
+		t.Fatalf("AddFullSampleToTrack(%s) error = %v", mediaType, err)
+	}
+	seg.AddFragment(frag)
+
+	var buf bytes.Buffer
+	if err := init.Encode(&buf); err != nil {
+		t.Fatalf("encode init(%s) error = %v", mediaType, err)
+	}
+	if err := seg.Encode(&buf); err != nil {
+		t.Fatalf("encode segment(%s) error = %v", mediaType, err)
+	}
+	return buf.Bytes()
+}
+
 func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
+
+	videoMP4 := buildFragmentedMP4(t, "video", 90000, []byte{0x00, 0x00, 0x00, 0x01, 0x67}) // fake NAL unit
+	audioMP4 := buildFragmentedMP4(t, "audio", 44100, []byte{0xFF, 0xF1})                    // fake AAC frame
 
 	base := filepath.Join(dir, "recording")
 	ch := New(&entity.ChannelConfig{
@@ -95,18 +134,11 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	})
 	ch.HasSeparateAudio = true
 	ch.CurrentFilename = base
-	ch.InitSegment = []byte("video-init")
-	ch.AudioInitSegment = []byte("audio-init")
+	ch.InitSegment = videoMP4
+	ch.AudioInitSegment = audioMP4
 
 	if err := ch.CreateNewFile(base); err != nil {
 		t.Fatalf("CreateNewFile() error = %v", err)
-	}
-
-	if _, err := ch.File.Write([]byte("video-fragment")); err != nil {
-		t.Fatalf("write video fragment error = %v", err)
-	}
-	if _, err := ch.AudioFile.Write([]byte("audio-fragment")); err != nil {
-		t.Fatalf("write audio fragment error = %v", err)
 	}
 
 	if err := ch.Cleanup(); err != nil {

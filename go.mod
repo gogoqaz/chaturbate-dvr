@@ -3,6 +3,7 @@ module github.com/teacat/chaturbate-dvr
 go 1.23.0
 
 require (
+	github.com/Eyevinn/mp4ff v0.51.0
 	github.com/avast/retry-go/v4 v4.6.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/grafov/m3u8 v0.12.1

@@ -2,13 +2,21 @@ package channel
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/teacat/chaturbate-dvr/internal"
+)
+
+// Track IDs for muxed output
+const (
+	videoTrackID uint32 = 1
+	audioTrackID uint32 = 2
 )
 
 // GPU encoder detection cache
@@ -140,6 +148,8 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 		"-map", "0:v:0",
 		"-map", "1:a:0",
 		"-c", "copy",
+		"-copyts",
+		"-avoid_negative_ts", "make_zero",
 		outputPath,
 	}
 
@@ -159,3 +169,163 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 	ch.Info("mux: combined %s + %s -> %s", filepath.Base(videoPath), filepath.Base(audioPath), filepath.Base(outputPath))
 	return nil
 }
+
+// MuxAVNative combines separate fragmented MP4 audio/video tracks without ffmpeg.
+func (ch *Channel) MuxAVNative(videoPath, audioPath, outputPath string) error {
+	videoFile, err := mp4.ReadMP4File(videoPath)
+	if err != nil {
+		return fmt.Errorf("decode video mp4: %w", err)
+	}
+	audioFile, err := mp4.ReadMP4File(audioPath)
+	if err != nil {
+		return fmt.Errorf("decode audio mp4: %w", err)
+	}
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("create mux output: %w", err)
+	}
+	defer outFile.Close()
+
+	if err := writeCombinedFragmentedMP4(outFile, videoFile, audioFile); err != nil {
+		outFile.Close()
+		os.Remove(outputPath)
+		return fmt.Errorf("native mux audio/video: %w", err)
+	}
+
+	ch.Info("mux: combined %s + %s -> %s (native)", filepath.Base(videoPath), filepath.Base(audioPath), filepath.Base(outputPath))
+	return nil
+}
+
+func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) error {
+	_, videoTrex, err := sourceTrack(videoFile, "vide")
+	if err != nil {
+		return fmt.Errorf("load video track: %w", err)
+	}
+	audioTrack, audioTrex, err := sourceTrack(audioFile, "soun")
+	if err != nil {
+		return fmt.Errorf("load audio track: %w", err)
+	}
+
+	ftyp := videoFile.Init.Ftyp
+	moov := videoFile.Init.Moov
+	if len(moov.Traks) != 1 || moov.Mvex == nil || len(moov.Mvex.Trexs) != 1 {
+		return fmt.Errorf("expected single-track video init")
+	}
+
+	moov.Traks[0].Tkhd.TrackID = videoTrackID
+	moov.Mvex.Trexs[0].TrackID = videoTrackID
+
+	audioTrack.Tkhd.TrackID = audioTrackID
+	audioTrex.TrackID = audioTrackID
+
+	moov.AddChild(audioTrack)
+	moov.Mvex.AddChild(audioTrex)
+	moov.Mvhd.NextTrackID = audioTrackID + 1
+
+	out := mp4.NewFile()
+	out.AddChild(ftyp, 0)
+	out.AddChild(moov, ftyp.Size())
+
+	segments, err := combineTrackFragments(collectFragments(videoFile), videoTrex, collectFragments(audioFile), audioTrex)
+	if err != nil {
+		return err
+	}
+	for _, segment := range segments {
+		out.AddMediaSegment(segment)
+	}
+
+	return out.Encode(w)
+}
+
+func sourceTrack(file *mp4.File, handlerType string) (*mp4.TrakBox, *mp4.TrexBox, error) {
+	if file == nil || file.Init == nil || file.Init.Moov == nil {
+		return nil, nil, fmt.Errorf("missing init segment")
+	}
+	if len(file.Init.Moov.Traks) != 1 {
+		return nil, nil, fmt.Errorf("expected exactly one track, got %d", len(file.Init.Moov.Traks))
+	}
+
+	trak := file.Init.Moov.Traks[0]
+	if trak == nil || trak.Tkhd == nil || trak.Mdia == nil || trak.Mdia.Hdlr == nil {
+		return nil, nil, fmt.Errorf("invalid track metadata")
+	}
+	if trak.Mdia.Hdlr.HandlerType != handlerType {
+		return nil, nil, fmt.Errorf("expected %s track, got %s", handlerType, trak.Mdia.Hdlr.HandlerType)
+	}
+	if file.Init.Moov.Mvex == nil {
+		return nil, nil, fmt.Errorf("missing mvex")
+	}
+
+	trex, ok := file.Init.Moov.Mvex.GetTrex(trak.Tkhd.TrackID)
+	if !ok || trex == nil {
+		return nil, nil, fmt.Errorf("missing trex for track %d", trak.Tkhd.TrackID)
+	}
+
+	return trak, trex, nil
+}
+
+func combineTrackFragments(videoFragments []*mp4.Fragment, videoTrex *mp4.TrexBox, audioFragments []*mp4.Fragment, audioTrex *mp4.TrexBox) ([]*mp4.MediaSegment, error) {
+	maxFragments := len(videoFragments)
+	if len(audioFragments) > maxFragments {
+		maxFragments = len(audioFragments)
+	}
+	if maxFragments == 0 {
+		return nil, fmt.Errorf("missing media fragments")
+	}
+
+	segments := make([]*mp4.MediaSegment, 0, maxFragments)
+	for i := 0; i < maxFragments; i++ {
+		trackIDs := make([]uint32, 0, 2)
+		if i < len(videoFragments) {
+			trackIDs = append(trackIDs, videoTrackID)
+		}
+		if i < len(audioFragments) {
+			trackIDs = append(trackIDs, audioTrackID)
+		}
+
+		fragment, err := mp4.CreateMultiTrackFragment(uint32(i+1), trackIDs)
+		if err != nil {
+			return nil, fmt.Errorf("create fragment %d: %w", i, err)
+		}
+
+		if i < len(videoFragments) {
+			if err := appendFragmentSamples(fragment, videoFragments[i], videoTrex, videoTrackID); err != nil {
+				return nil, fmt.Errorf("append video fragment %d: %w", i, err)
+			}
+		}
+		if i < len(audioFragments) {
+			if err := appendFragmentSamples(fragment, audioFragments[i], audioTrex, audioTrackID); err != nil {
+				return nil, fmt.Errorf("append audio fragment %d: %w", i, err)
+			}
+		}
+
+		segment := mp4.NewMediaSegmentWithoutStyp()
+		segment.AddFragment(fragment)
+		segments = append(segments, segment)
+	}
+
+	return segments, nil
+}
+
+func appendFragmentSamples(dst, src *mp4.Fragment, trex *mp4.TrexBox, trackID uint32) error {
+	fullSamples, err := src.GetFullSamples(trex)
+	if err != nil {
+		return err
+	}
+	for _, sample := range fullSamples {
+		if err := dst.AddFullSampleToTrack(sample, trackID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func collectFragments(file *mp4.File) []*mp4.Fragment {
+	var fragments []*mp4.Fragment
+	for _, segment := range file.Segments {
+		fragments = append(fragments, segment.Fragments...)
+	}
+	return fragments
+}
+
