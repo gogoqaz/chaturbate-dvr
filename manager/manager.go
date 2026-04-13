@@ -170,18 +170,18 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	})
 
 	sort.Slice(channels, func(i, j int) bool {
-		// Helper function to get sort priority
+		// Paused channels always sort to the bottom (requested in issue #18).
 		getPriority := func(c *entity.ChannelInfo) int {
-			if c.IsOnline && !c.IsPaused {
+			switch {
+			case !c.IsPaused && c.IsOnline:
 				return 0 // Recording
+			case !c.IsPaused:
+				return 1 // Offline, actively watching
+			case c.IsOnline:
+				return 2 // Paused, currently online
+			default:
+				return 3 // Paused, offline
 			}
-			if c.IsPaused && c.IsOnline {
-				return 1 // Paused but online
-			}
-			if c.IsPaused {
-				return 2 // Paused and offline
-			}
-			return 3 // Offline
 		}
 
 		pi, pj := getPriority(channels[i]), getPriority(channels[j])
