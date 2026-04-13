@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/teacat/chaturbate-dvr/server"
 )
 
 // Pattern holds the date/time and sequence information for the filename pattern
@@ -91,15 +94,75 @@ func (ch *Channel) Cleanup() error {
 
 		if ch.Config.Compress {
 			ch.CompressFile(finalOutput)
+		} else {
+			ch.MoveToOutputDir(finalOutput)
 		}
 		return nil
 	}
 
-	if ch.Config.Compress && videoInfo != nil && videoInfo.Size() > 0 {
-		ch.CompressFile(videoFilename)
+	if videoInfo != nil && videoInfo.Size() > 0 {
+		if ch.Config.Compress {
+			ch.CompressFile(videoFilename)
+		} else {
+			ch.MoveToOutputDir(videoFilename)
+		}
 	}
 
 	return nil
+}
+
+// MoveToOutputDir moves a finalized recording into the configured OutputDir.
+// When OutputDir is empty it is a no-op. With PerModelFolder, files land under
+// OutputDir/<username>/. Falls back to copy+delete across filesystems. Errors
+// are logged but not propagated — the recording is already safe on disk.
+func (ch *Channel) MoveToOutputDir(srcPath string) string {
+	if server.Config == nil || server.Config.OutputDir == "" {
+		return srcPath
+	}
+
+	destDir := server.Config.OutputDir
+	if server.Config.PerModelFolder {
+		destDir = filepath.Join(destDir, ch.Config.Username)
+	}
+	if err := os.MkdirAll(destDir, 0777); err != nil {
+		ch.Error("output-dir: mkdir %s: %s", destDir, err.Error())
+		return srcPath
+	}
+
+	destPath := filepath.Join(destDir, filepath.Base(srcPath))
+	if err := moveFile(srcPath, destPath); err != nil {
+		ch.Error("output-dir: move %s: %s", filepath.Base(srcPath), err.Error())
+		return srcPath
+	}
+	ch.Info("output-dir: moved %s -> %s", filepath.Base(srcPath), destPath)
+	return destPath
+}
+
+func moveFile(src, dest string) error {
+	if err := os.Rename(src, dest); err == nil {
+		return nil
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dest)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dest)
+		return err
+	}
+	return os.Remove(src)
 }
 
 // GenerateFilename creates a filename based on the configured pattern and the current timestamp

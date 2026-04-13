@@ -136,6 +136,8 @@ func (ch *Channel) CompressFile(srcPath string) {
 		}
 
 		ch.Info("compress: done %s -> %s (%s, %.1f%%)", srcFilename, mkvFilename, internal.FormatFilesize(int(mkvSize)), ratio)
+
+		ch.MoveToOutputDir(mkvPath)
 	}()
 }
 

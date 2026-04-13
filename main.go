@@ -107,6 +107,18 @@ func main() {
 				Usage: "Compress recorded files (.ts or .mp4) to .mkv using ffmpeg after recording (auto-enabled if ffmpeg is installed)",
 				Value: false,
 			},
+			&cli.StringFlag{
+				Name:    "output-dir",
+				Usage:   "Directory to move completed recordings to (empty = keep in place)",
+				EnvVars: []string{"OUTPUT_DIR"},
+				Value:   "",
+			},
+			&cli.BoolFlag{
+				Name:    "per-model-folder",
+				Usage:   "Create a subdirectory per model inside --output-dir",
+				EnvVars: []string{"PER_MODEL_FOLDER"},
+				Value:   false,
+			},
 		},
 		Action: start,
 	}

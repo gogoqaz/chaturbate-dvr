@@ -66,4 +66,11 @@ type Config struct {
 	Cookies       string
 	UserAgent     string
 	Domain        string
+
+	// OutputDir is an optional directory to which finalized recordings are moved
+	// after recording (and optional compression) completes. Empty means "keep in place".
+	OutputDir string
+	// PerModelFolder, when true, creates a subdirectory named after the channel's
+	// Username inside OutputDir for each moved file.
+	PerModelFolder bool
 }
