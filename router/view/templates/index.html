@@ -14,6 +14,15 @@
         <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
         <link rel="manifest" href="/static/site.webmanifest">
         <title>Chaturbate DVR</title>
+        <script>
+            // Apply dark mode before body paints to prevent flash-of-light.
+            (function() {
+                if (localStorage.getItem('darkMode') === 'true' ||
+                    (localStorage.getItem('darkMode') === null && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                    document.documentElement.classList.add('dark');
+                }
+            })();
+        </script>
     </head>
 
     <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-screen font-sans overflow-hidden" hx-ext="sse">
@@ -341,13 +350,6 @@
                 var isDark = document.documentElement.classList.toggle('dark');
                 localStorage.setItem('darkMode', isDark ? 'true' : 'false');
             }
-
-            (function() {
-                if (localStorage.getItem('darkMode') === 'true' ||
-                    (localStorage.getItem('darkMode') === null && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-                    document.documentElement.classList.add('dark');
-                }
-            })();
 
             // === Init on page load ===
             document.addEventListener("DOMContentLoaded", function() {

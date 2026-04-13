@@ -127,13 +127,31 @@ func (ch *Channel) MoveToOutputDir(srcPath string) string {
 		return srcPath
 	}
 
-	destPath := filepath.Join(destDir, filepath.Base(srcPath))
+	destPath := uniqueDestPath(filepath.Join(destDir, filepath.Base(srcPath)))
 	if err := moveFile(srcPath, destPath); err != nil {
 		ch.Error("output-dir: move %s: %s", filepath.Base(srcPath), err.Error())
 		return srcPath
 	}
 	ch.Info("output-dir: moved %s -> %s", filepath.Base(srcPath), destPath)
 	return destPath
+}
+
+// uniqueDestPath returns path if it does not exist, otherwise appends
+// " (n)" before the extension until an unused path is found. Gives up
+// after 1000 tries and returns the last candidate.
+func uniqueDestPath(path string) string {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return path
+	}
+	ext := filepath.Ext(path)
+	base := path[:len(path)-len(ext)]
+	for i := 1; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s (%d)%s", base, i, ext)
+		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s (999)%s", base, ext)
 }
 
 func moveFile(src, dest string) error {
@@ -147,7 +165,7 @@ func moveFile(src, dest string) error {
 	}
 	defer in.Close()
 
-	out, err := os.Create(dest)
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
 	if err != nil {
 		return err
 	}
