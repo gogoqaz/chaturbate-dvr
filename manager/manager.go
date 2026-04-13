@@ -170,7 +170,7 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	})
 
 	sort.Slice(channels, func(i, j int) bool {
-		// Paused channels always sort to the bottom (requested in issue #18).
+		// Paused channels always sort to the bottom.
 		getPriority := func(c *entity.ChannelInfo) int {
 			switch {
 			case !c.IsPaused && c.IsOnline:

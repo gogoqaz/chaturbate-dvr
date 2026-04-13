@@ -111,10 +111,8 @@ func (ch *Channel) Cleanup() error {
 	return nil
 }
 
-// MoveToOutputDir moves a finalized recording into the configured OutputDir.
-// When OutputDir is empty it is a no-op. With PerModelFolder, files land under
-// OutputDir/<username>/. Falls back to copy+delete across filesystems. Errors
-// are logged but not propagated — the recording is already safe on disk.
+// MoveToOutputDir relocates a finalized recording into server.Config.OutputDir.
+// Errors are non-fatal: the recording is already safely written at srcPath.
 func (ch *Channel) MoveToOutputDir(srcPath string) string {
 	if server.Config == nil || server.Config.OutputDir == "" {
 		return srcPath
@@ -154,6 +152,13 @@ func moveFile(src, dest string) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dest)
+		return err
+	}
+	// Sync before close so a crash between close and os.Remove(src) can't
+	// leave a truncated destination alongside a deleted source.
+	if err := out.Sync(); err != nil {
 		out.Close()
 		os.Remove(dest)
 		return err
