@@ -66,4 +66,7 @@ type Config struct {
 	Cookies       string
 	UserAgent     string
 	Domain        string
+
+	OutputDir      string
+	PerModelFolder bool
 }

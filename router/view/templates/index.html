@@ -14,28 +14,37 @@
         <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
         <link rel="manifest" href="/static/site.webmanifest">
         <title>Chaturbate DVR</title>
+        <script>
+            // Apply dark mode before body paints to prevent flash-of-light.
+            (function() {
+                if (localStorage.getItem('darkMode') === 'true' ||
+                    (localStorage.getItem('darkMode') === null && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                    document.documentElement.classList.add('dark');
+                }
+            })();
+        </script>
     </head>
 
-    <body class="bg-zinc-50 text-zinc-900 h-screen font-sans overflow-hidden" hx-ext="sse">
+    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-screen font-sans overflow-hidden" hx-ext="sse">
         <div class="flex h-screen">
 
             <!-- Sidebar -->
-            <aside class="w-[260px] bg-white border-r border-zinc-200 flex flex-col shrink-0">
+            <aside class="w-[260px] bg-white dark:bg-zinc-800 border-r border-zinc-200 dark:border-zinc-700 flex flex-col shrink-0">
 
                 <!-- Sidebar Header -->
-                <div class="p-5 pb-4 border-b border-zinc-100">
+                <div class="p-5 pb-4 border-b border-zinc-100 dark:border-zinc-700">
                     <h1 class="text-lg font-black uppercase tracking-tight">Chaturbate DVR</h1>
                     <div class="text-[10px] text-zinc-400 uppercase mt-1" id="recording-counter"></div>
                     <div class="flex gap-2 mt-3">
                         <button onclick="document.getElementById('settings-dialog').showModal()"
-                                class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium border border-zinc-200 rounded-lg hover:bg-zinc-50 transition-colors">
+                                class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium border border-zinc-200 dark:border-zinc-600 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
                             </svg>
                             Settings
                         </button>
                         <button onclick="document.getElementById('create-dialog').showModal()"
-                                class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors">
+                                class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-300 transition-colors">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <path d="M12 5v14m-7-7h14"/>
                             </svg>
@@ -48,8 +57,10 @@
                 <!-- Channel List -->
                 <div class="flex-1 overflow-y-auto p-2">
                     {{ range .Channels }}
-                    <div class="channel-item flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors hover:bg-zinc-50 mb-0.5"
-                         data-username="{{ .Username }}" onclick="selectChannel('{{ .Username }}')">
+                    <div class="channel-item flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700 mb-0.5"
+                         data-username="{{ .Username }}"
+                         data-priority="{{ if and .IsOnline (not .IsPaused) }}0{{ else if .IsPaused }}{{ if .IsOnline }}2{{ else }}3{{ end }}{{ else }}1{{ end }}"
+                         onclick="selectChannel('{{ .Username }}')">
                         <span class="w-2 h-2 rounded-full shrink-0 {{ if and .IsOnline (not .IsPaused) }}bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]{{ else if .IsPaused }}bg-red-500{{ else }}bg-zinc-300{{ end }}"
                               data-status-dot="{{ .Username }}"></span>
                         <span class="text-sm font-semibold flex-1 truncate">{{ .Username }}</span>
@@ -63,8 +74,12 @@
                 <!-- / Channel List -->
 
                 <!-- Sidebar Footer -->
-                <div class="px-4 py-3 border-t border-zinc-100">
+                <div class="px-4 py-3 border-t border-zinc-100 dark:border-zinc-700 flex items-center justify-between">
                     <span class="text-[10px] text-zinc-400 uppercase">Version {{ .Config.Version }}</span>
+                    <button onclick="toggleDarkMode()" class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" title="Toggle dark mode">
+                        <svg class="w-4 h-4 block dark:hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                        <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                    </button>
                 </div>
                 <!-- / Sidebar Footer -->
 
@@ -80,10 +95,10 @@
                     <svg class="w-12 h-12 mb-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
                         <path d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
                     </svg>
-                    <h2 class="text-lg font-semibold text-zinc-600 mb-1">No channels are currently recording</h2>
+                    <h2 class="text-lg font-semibold text-zinc-600 dark:text-zinc-300 mb-1">No channels are currently recording</h2>
                     <p class="text-sm text-zinc-400 mb-4">Add a new Chaturbate channel to start recording.</p>
                     <button onclick="document.getElementById('create-dialog').showModal()"
-                            class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors">
+                            class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-300 transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path d="M12 5v14m-7-7h14"/>
                         </svg>
@@ -107,15 +122,15 @@
                 <div class="channel-detail hidden flex-1 flex flex-col overflow-hidden" data-channel="{{ .Username }}">
                     <div class="flex-1 flex overflow-hidden">
                         <!-- Info panel -->
-                        <div sse-swap="{{ .Username }}-info" class="w-[300px] p-5 border-r border-zinc-200 bg-white overflow-y-auto" style="line-height: 1.45">
+                        <div sse-swap="{{ .Username }}-info" class="w-[300px] p-5 border-r border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-y-auto" style="line-height: 1.45">
                             {{ template "channel_info" . }}
                         </div>
                         <!-- Log panel -->
-                        <div class="flex-1 flex flex-col p-5 bg-zinc-50">
-                            <textarea class="flex-1 min-h-0 w-full bg-white border border-zinc-200 rounded-lg p-3 font-mono text-xs text-zinc-500 resize-none focus:outline-none"
+                        <div class="flex-1 flex flex-col p-5 bg-zinc-50 dark:bg-zinc-900">
+                            <textarea class="flex-1 min-h-0 w-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-3 font-mono text-xs text-zinc-500 dark:text-zinc-400 resize-none focus:outline-none"
                                       readonly sse-swap="{{ .Username }}-log">{{ range .Logs }}{{ . }}&NewLine;{{ end }}</textarea>
-                            <label class="inline-flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none mt-2">
-                                <input type="checkbox" checked class="accent-zinc-900" />
+                            <label class="inline-flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500 cursor-pointer select-none mt-2">
+                                <input type="checkbox" checked class="accent-zinc-900 dark:accent-zinc-100" />
                                 Auto-Update &amp; Scroll Logs
                             </label>
                         </div>
@@ -131,61 +146,61 @@
         </div>
 
         <!-- Settings Dialog -->
-        <dialog id="settings-dialog" class="bg-white text-zinc-900 rounded-xl border border-zinc-200 shadow-xl w-full max-w-[560px] p-0">
+        <dialog id="settings-dialog" class="bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-xl w-full max-w-[560px] p-0">
             <form action="/update_config" method="POST">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-100 dark:border-zinc-700">
                     <h2 class="text-base font-semibold">Settings</h2>
                     <button type="button" onclick="this.closest('dialog').close()"
-                            class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 transition-colors text-zinc-400 hover:text-zinc-900">
+                            class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-1.5">Cookies</label>
-                        <textarea name="cookies" rows="4" class="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent resize-none">{{ .Config.Cookies }}</textarea>
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1.5">Cookies</label>
+                        <textarea name="cookies" rows="4" class="w-full bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent resize-none">{{ .Config.Cookies }}</textarea>
                         <p class="text-xs text-zinc-400 mt-1">Use semicolons to separate multiple cookies. See <a class="text-blue-600 hover:text-blue-500 underline" href="https://github.com/teacat/chaturbate-dvr/?tab=readme-ov-file#-cookies--user-agent" target="_blank">README</a> for details.</p>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-1.5">User Agent</label>
-                        <textarea name="user_agent" rows="4" class="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent resize-none">{{ .Config.UserAgent }}</textarea>
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1.5">User Agent</label>
+                        <textarea name="user_agent" rows="4" class="w-full bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-lg px-3 py-2 text-sm dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent resize-none">{{ .Config.UserAgent }}</textarea>
                         <p class="text-xs text-zinc-400 mt-1">User-Agent can be found using tools like <a class="text-blue-600 hover:text-blue-500 underline" href="https://www.whatismybrowser.com/detect/what-is-my-user-agent/" target="_blank">WhatIsMyBrowser</a>.</p>
                     </div>
                 </div>
-                <div class="flex items-center gap-2 px-6 py-3 bg-amber-50 border-t border-zinc-100 text-xs text-amber-700">
+                <div class="flex items-center gap-2 px-6 py-3 bg-amber-50 dark:bg-amber-900/20 border-t border-zinc-100 dark:border-zinc-700 text-xs text-amber-700 dark:text-amber-400">
                     <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01"/></svg>
                     Changes will be reverted after the program restarts
                 </div>
-                <div class="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100">
-                    <button type="button" onclick="this.closest('dialog').close()" class="px-4 py-2 text-sm font-medium border border-zinc-200 rounded-lg hover:bg-zinc-50 transition-colors">Cancel</button>
-                    <button type="submit" class="px-4 py-2 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors">Apply</button>
+                <div class="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100 dark:border-zinc-700">
+                    <button type="button" onclick="this.closest('dialog').close()" class="px-4 py-2 text-sm font-medium border border-zinc-200 dark:border-zinc-600 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors">Cancel</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-300 transition-colors">Apply</button>
                 </div>
             </form>
         </dialog>
         <!-- / Settings Dialog -->
 
         <!-- Create Dialog -->
-        <dialog id="create-dialog" class="bg-white text-zinc-900 rounded-xl border border-zinc-200 shadow-xl w-full max-w-[560px] p-0">
+        <dialog id="create-dialog" class="bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-xl w-full max-w-[560px] p-0">
             <form action="/create_channel" method="POST">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-100 dark:border-zinc-700">
                     <h2 class="text-base font-semibold">Add Channel</h2>
                     <button type="button" onclick="this.closest('dialog').close()"
-                            class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 transition-colors text-zinc-400 hover:text-zinc-900">
+                            class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-1.5">Channel Username</label>
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1.5">Channel Username</label>
                         <div class="flex">
-                            <span class="inline-flex items-center px-3 text-sm text-zinc-400 bg-zinc-50 border border-r-0 border-zinc-200 rounded-l-lg">{{ .Config.Domain }}</span>
-                            <input type="text" name="username" autofocus required class="flex-1 border border-zinc-200 rounded-r-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
+                            <span class="inline-flex items-center px-3 text-sm text-zinc-400 bg-zinc-50 dark:bg-zinc-700 border border-r-0 border-zinc-200 dark:border-zinc-600 rounded-l-lg">{{ .Config.Domain }}</span>
+                            <input type="text" name="username" autofocus required class="flex-1 border border-zinc-200 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 rounded-r-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
                         </div>
                         <p class="text-xs text-zinc-400 mt-1">Use commas to separate multiple channel names.</p>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-1.5">Resolution</label>
-                        <select name="resolution" class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent">
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1.5">Resolution</label>
+                        <select name="resolution" class="w-full border border-zinc-200 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent">
                             <option value="2160" {{ if eq .Config.Resolution 2160 }}selected{{ end }}>4K</option>
                             <option value="1440" {{ if eq .Config.Resolution 1440 }}selected{{ end }}>2K</option>
                             <option value="1080" {{ if eq .Config.Resolution 1080 }}selected{{ end }}>1080p</option>
@@ -197,38 +212,38 @@
                         <p class="text-xs text-zinc-400 mt-1">The lower resolution will be used if the selected resolution is not available.</p>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-2">Framerate</label>
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">Framerate</label>
                         <div class="space-y-1.5 pl-1">
                             <label class="flex items-center gap-2 text-sm cursor-pointer">
-                                <input type="radio" name="framerate" value="60" {{ if eq .Config.Framerate 60 }}checked{{ end }} class="accent-zinc-900" /> 60 FPS (or lower)
+                                <input type="radio" name="framerate" value="60" {{ if eq .Config.Framerate 60 }}checked{{ end }} class="accent-zinc-900 dark:accent-zinc-100" /> 60 FPS (or lower)
                             </label>
                             <label class="flex items-center gap-2 text-sm cursor-pointer">
-                                <input type="radio" name="framerate" value="30" {{ if eq .Config.Framerate 30 }}checked{{ end }} class="accent-zinc-900" /> 30 FPS
+                                <input type="radio" name="framerate" value="30" {{ if eq .Config.Framerate 30 }}checked{{ end }} class="accent-zinc-900 dark:accent-zinc-100" /> 30 FPS
                             </label>
                         </div>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-1.5">Filename Pattern</label>
-                        <input type="text" name="pattern" value="{{ .Config.Pattern }}" class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-1.5">Filename Pattern</label>
+                        <input type="text" name="pattern" value="{{ .Config.Pattern }}" class="w-full border border-zinc-200 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
                         <p class="text-xs text-zinc-400 mt-1">See the <a class="text-blue-600 hover:text-blue-500 underline" href="https://github.com/teacat/chaturbate-dvr" target="_blank">README</a> for details.</p>
                     </div>
-                    <div class="h-px bg-zinc-100"></div>
+                    <div class="h-px bg-zinc-100 dark:bg-zinc-600"></div>
                     <div>
-                        <label class="block text-sm font-medium text-zinc-600 mb-2">Splitting Options</label>
-                        <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-4">
+                        <label class="block text-sm font-medium text-zinc-600 dark:text-zinc-300 mb-2">Splitting Options</label>
+                        <div class="bg-zinc-50 dark:bg-zinc-700/50 border border-zinc-100 dark:border-zinc-600 rounded-lg p-4">
                             <div class="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label class="block text-xs font-medium text-zinc-500 mb-1">Max Filesize</label>
+                                    <label class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Max Filesize</label>
                                     <div class="flex">
-                                        <input type="number" name="max_filesize" value="{{ .Config.MaxFilesize }}" class="flex-1 min-w-0 border border-r-0 border-zinc-200 rounded-l-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
-                                        <span class="inline-flex items-center px-3 text-sm text-zinc-400 bg-white border border-zinc-200 rounded-r-lg">MB</span>
+                                        <input type="number" name="max_filesize" value="{{ .Config.MaxFilesize }}" class="flex-1 min-w-0 border border-r-0 border-zinc-200 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 rounded-l-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
+                                        <span class="inline-flex items-center px-3 text-sm text-zinc-400 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-r-lg">MB</span>
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium text-zinc-500 mb-1">Max Duration</label>
+                                    <label class="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Max Duration</label>
                                     <div class="flex">
-                                        <input type="number" name="max_duration" value="{{ .Config.MaxDuration }}" class="flex-1 min-w-0 border border-r-0 border-zinc-200 rounded-l-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
-                                        <span class="inline-flex items-center px-3 text-sm text-zinc-400 bg-white border border-zinc-200 rounded-r-lg">Min(s)</span>
+                                        <input type="number" name="max_duration" value="{{ .Config.MaxDuration }}" class="flex-1 min-w-0 border border-r-0 border-zinc-200 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 rounded-l-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400 focus:border-transparent" />
+                                        <span class="inline-flex items-center px-3 text-sm text-zinc-400 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 rounded-r-lg">Min(s)</span>
                                     </div>
                                 </div>
                             </div>
@@ -237,15 +252,15 @@
                     </div>
                     <div>
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
-                            <input type="checkbox" name="compress" value="true" {{ if .Config.Compress }}checked{{ end }} class="accent-zinc-900" />
+                            <input type="checkbox" name="compress" value="true" {{ if .Config.Compress }}checked{{ end }} class="accent-zinc-900 dark:accent-zinc-100" />
                             Compress to MKV after recording (requires ffmpeg)
                         </label>
                         <p class="text-xs text-zinc-400 mt-1 ml-6">Convert recorded .ts or .mp4 files to .mkv with ffmpeg. Original source files will be deleted.</p>
                     </div>
                 </div>
-                <div class="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100">
-                    <button type="button" onclick="this.closest('dialog').close()" class="px-4 py-2 text-sm font-medium border border-zinc-200 rounded-lg hover:bg-zinc-50 transition-colors">Cancel</button>
-                    <button type="submit" class="px-4 py-2 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors">Add Channel</button>
+                <div class="flex justify-end gap-2 px-6 py-4 border-t border-zinc-100 dark:border-zinc-700">
+                    <button type="button" onclick="this.closest('dialog').close()" class="px-4 py-2 text-sm font-medium border border-zinc-200 dark:border-zinc-600 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors">Cancel</button>
+                    <button type="submit" class="px-4 py-2 text-sm font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-300 transition-colors">Add Channel</button>
                 </div>
             </form>
         </dialog>
@@ -262,7 +277,7 @@
                 if (panel) panel.classList.remove('hidden');
 
                 document.querySelectorAll('.channel-item').forEach(function(el) {
-                    el.classList.toggle('bg-zinc-100', el.dataset.username === username);
+                    el.classList.toggle('selected', el.dataset.username === username);
                 });
 
                 sessionStorage.setItem('selectedChannel', username);
@@ -277,6 +292,26 @@
                 } else {
                     el.textContent = 'No Recording';
                 }
+            }
+
+            // === Sidebar order (mirrors manager.ChannelInfo sort) ===
+            function channelPriority(status, isOnline) {
+                if (status === 'recording') return 0;
+                if (status === 'paused') return isOnline ? 2 : 3;
+                return 1;
+            }
+
+            function resortChannels() {
+                var items = Array.from(document.querySelectorAll('.channel-item'));
+                if (!items.length) return;
+                var container = items[0].parentNode;
+                items.sort(function(a, b) {
+                    var pa = parseInt(a.dataset.priority || '1', 10);
+                    var pb = parseInt(b.dataset.priority || '1', 10);
+                    if (pa !== pb) return pa - pb;
+                    return a.dataset.username.toLowerCase().localeCompare(b.dataset.username.toLowerCase());
+                });
+                items.forEach(function(el) { container.appendChild(el); });
             }
 
             // === Sidebar dot sync ===
@@ -326,11 +361,27 @@
                     var username = sseId.replace("-info", "");
                     var statusEl = e.detail.elt.querySelector("[data-status]");
                     if (statusEl) {
-                        updateSidebarDot(username, statusEl.dataset.status, statusEl.dataset.online === 'true', statusEl.dataset.roomStatus || '');
+                        var status = statusEl.dataset.status;
+                        var isOnline = statusEl.dataset.online === 'true';
+                        updateSidebarDot(username, status, isOnline, statusEl.dataset.roomStatus || '');
+                        var item = document.querySelector('.channel-item[data-username="' + username + '"]');
+                        if (item) {
+                            var newPriority = String(channelPriority(status, isOnline));
+                            if (item.dataset.priority !== newPriority) {
+                                item.dataset.priority = newPriority;
+                                resortChannels();
+                            }
+                        }
                     }
                     updateRecordingCount();
                 }
             });
+
+            // === Dark mode ===
+            function toggleDarkMode() {
+                var isDark = document.documentElement.classList.toggle('dark');
+                localStorage.setItem('darkMode', isDark ? 'true' : 'false');
+            }
 
             // === Init on page load ===
             document.addEventListener("DOMContentLoaded", function() {

@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/teacat/chaturbate-dvr/server"
 )
 
 // Pattern holds the date/time and sequence information for the filename pattern
@@ -91,15 +94,98 @@ func (ch *Channel) Cleanup() error {
 
 		if ch.Config.Compress {
 			ch.CompressFile(finalOutput)
+		} else {
+			ch.MoveToOutputDir(finalOutput)
 		}
 		return nil
 	}
 
-	if ch.Config.Compress && videoInfo != nil && videoInfo.Size() > 0 {
-		ch.CompressFile(videoFilename)
+	if videoInfo != nil && videoInfo.Size() > 0 {
+		if ch.Config.Compress {
+			ch.CompressFile(videoFilename)
+		} else {
+			ch.MoveToOutputDir(videoFilename)
+		}
 	}
 
 	return nil
+}
+
+// MoveToOutputDir relocates a finalized recording into server.Config.OutputDir.
+// Errors are non-fatal: the recording is already safely written at srcPath.
+func (ch *Channel) MoveToOutputDir(srcPath string) string {
+	if server.Config == nil || server.Config.OutputDir == "" {
+		return srcPath
+	}
+
+	destDir := server.Config.OutputDir
+	if server.Config.PerModelFolder {
+		destDir = filepath.Join(destDir, ch.Config.Username)
+	}
+	if err := os.MkdirAll(destDir, 0777); err != nil {
+		ch.Error("output-dir: mkdir %s: %s", destDir, err.Error())
+		return srcPath
+	}
+
+	destPath := uniqueDestPath(filepath.Join(destDir, filepath.Base(srcPath)))
+	if err := moveFile(srcPath, destPath); err != nil {
+		ch.Error("output-dir: move %s: %s", filepath.Base(srcPath), err.Error())
+		return srcPath
+	}
+	ch.Info("output-dir: moved %s -> %s", filepath.Base(srcPath), destPath)
+	return destPath
+}
+
+// uniqueDestPath returns path if it does not exist, otherwise appends
+// " (n)" before the extension until an unused path is found. Gives up
+// after 1000 tries and returns the last candidate.
+func uniqueDestPath(path string) string {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return path
+	}
+	ext := filepath.Ext(path)
+	base := path[:len(path)-len(ext)]
+	for i := 1; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s (%d)%s", base, i, ext)
+		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s (999)%s", base, ext)
+}
+
+func moveFile(src, dest string) error {
+	if err := os.Rename(src, dest); err == nil {
+		return nil
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dest)
+		return err
+	}
+	// Sync before close so a crash between close and os.Remove(src) can't
+	// leave a truncated destination alongside a deleted source.
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(dest)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(dest)
+		return err
+	}
+	return os.Remove(src)
 }
 
 // GenerateFilename creates a filename based on the configured pattern and the current timestamp

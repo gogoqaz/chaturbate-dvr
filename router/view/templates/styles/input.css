@@ -13,9 +13,13 @@ textarea {
   scrollbar-width: thin;
   scrollbar-color: #d4d4d8 transparent;
 }
+.dark textarea {
+  scrollbar-color: #52525b transparent;
+}
 textarea::-webkit-scrollbar { width: 6px; }
 textarea::-webkit-scrollbar-track { background: transparent; }
 textarea::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 3px; }
+.dark textarea::-webkit-scrollbar-thumb { background: #52525b; }
 
 /* Select dropdown arrow */
 select {
@@ -26,3 +30,10 @@ select {
   background-size: 1.5em 1.5em;
   padding-right: 2.5rem;
 }
+.dark select {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23a1a1aa' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+}
+
+/* Channel item selected state */
+.channel-item.selected { @apply bg-zinc-100; }
+.dark .channel-item.selected { @apply bg-zinc-700; }
