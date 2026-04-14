@@ -58,7 +58,9 @@
                 <div class="flex-1 overflow-y-auto p-2">
                     {{ range .Channels }}
                     <div class="channel-item flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700 mb-0.5"
-                         data-username="{{ .Username }}" onclick="selectChannel('{{ .Username }}')">
+                         data-username="{{ .Username }}"
+                         data-priority="{{ if and .IsOnline (not .IsPaused) }}0{{ else if .IsPaused }}{{ if .IsOnline }}2{{ else }}3{{ end }}{{ else }}1{{ end }}"
+                         onclick="selectChannel('{{ .Username }}')">
                         <span class="w-2 h-2 rounded-full shrink-0 {{ if and .IsOnline (not .IsPaused) }}bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]{{ else if .IsPaused }}bg-red-500{{ else }}bg-zinc-300{{ end }}"
                               data-status-dot="{{ .Username }}"></span>
                         <span class="text-sm font-semibold flex-1 truncate">{{ .Username }}</span>
@@ -292,6 +294,26 @@
                 }
             }
 
+            // === Sidebar order (mirrors manager.ChannelInfo sort) ===
+            function channelPriority(status, isOnline) {
+                if (status === 'recording') return 0;
+                if (status === 'paused') return isOnline ? 2 : 3;
+                return 1;
+            }
+
+            function resortChannels() {
+                var items = Array.from(document.querySelectorAll('.channel-item'));
+                if (!items.length) return;
+                var container = items[0].parentNode;
+                items.sort(function(a, b) {
+                    var pa = parseInt(a.dataset.priority || '1', 10);
+                    var pb = parseInt(b.dataset.priority || '1', 10);
+                    if (pa !== pb) return pa - pb;
+                    return a.dataset.username.toLowerCase().localeCompare(b.dataset.username.toLowerCase());
+                });
+                items.forEach(function(el) { container.appendChild(el); });
+            }
+
             // === Sidebar dot sync ===
             function updateSidebarDot(username, status, isOnline, roomStatus) {
                 var dot = document.querySelector('[data-status-dot="' + username + '"]');
@@ -339,7 +361,17 @@
                     var username = sseId.replace("-info", "");
                     var statusEl = e.detail.elt.querySelector("[data-status]");
                     if (statusEl) {
-                        updateSidebarDot(username, statusEl.dataset.status, statusEl.dataset.online === 'true', statusEl.dataset.roomStatus || '');
+                        var status = statusEl.dataset.status;
+                        var isOnline = statusEl.dataset.online === 'true';
+                        updateSidebarDot(username, status, isOnline, statusEl.dataset.roomStatus || '');
+                        var item = document.querySelector('.channel-item[data-username="' + username + '"]');
+                        if (item) {
+                            var newPriority = String(channelPriority(status, isOnline));
+                            if (item.dataset.priority !== newPriority) {
+                                item.dataset.priority = newPriority;
+                                resortChannels();
+                            }
+                        }
                     }
                     updateRecordingCount();
                 }
