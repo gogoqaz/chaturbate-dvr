@@ -267,28 +267,17 @@
         <!-- / Create Dialog -->
 
         <script>
-            // === Mobile view swap ===
-            // Below md (768px), sidebar and main-content are stacked overlays — only
-            // one visible at a time. We toggle `max-md:hidden` / `max-md:flex` on
-            // each. Desktop (>= md) always shows both side by side regardless.
+            // Below md (768px), sidebar and main-content are stacked overlays — only one visible at a time.
             function isMobile() {
                 return window.matchMedia('(max-width: 767px)').matches;
             }
-            function showChannelList() {
-                var sidebar = document.getElementById('sidebar');
-                var main = document.getElementById('main-content');
-                if (sidebar) sidebar.classList.remove('max-md:hidden');
-                if (main) main.classList.add('max-md:hidden');
-            }
-            function showChannelDetail() {
-                var sidebar = document.getElementById('sidebar');
-                var main = document.getElementById('main-content');
-                if (sidebar) sidebar.classList.add('max-md:hidden');
-                if (main) main.classList.remove('max-md:hidden');
+            function setMobileView(view) { // 'list' | 'detail'
+                document.getElementById('sidebar').classList.toggle('max-md:hidden', view === 'detail');
+                document.getElementById('main-content').classList.toggle('max-md:hidden', view === 'list');
             }
 
             // === Channel selection ===
-            function selectChannel(username) {
+            function selectChannel(username, skipMobileFlip) {
                 document.querySelectorAll('.channel-detail').forEach(function(el) { el.classList.add('hidden'); });
                 var noSel = document.getElementById('no-selection');
                 if (noSel) noSel.classList.add('hidden');
@@ -302,7 +291,7 @@
 
                 sessionStorage.setItem('selectedChannel', username);
 
-                if (isMobile()) showChannelDetail();
+                if (!skipMobileFlip && isMobile()) setMobileView('detail');
             }
 
             // === Recording counter ===
@@ -409,18 +398,15 @@
             document.addEventListener("DOMContentLoaded", function() {
                 updateRecordingCount();
 
+                // First load always lands on the channel list — skip the mobile flip into detail view.
                 var saved = sessionStorage.getItem('selectedChannel');
                 if (saved && document.querySelector('[data-channel="' + saved + '"]')) {
-                    selectChannel(saved);
+                    selectChannel(saved, true);
                 } else {
                     sessionStorage.removeItem('selectedChannel');
                     var first = document.querySelector('.channel-item');
-                    if (first) selectChannel(first.dataset.username);
+                    if (first) selectChannel(first.dataset.username, true);
                 }
-
-                // selectChannel flips to detail view on mobile; on first load we
-                // always land on the list so the user sees all channels first.
-                if (isMobile()) showChannelList();
 
                 document.querySelectorAll("textarea").forEach(function(ta) {
                     ta.scrollTop = ta.scrollHeight;
