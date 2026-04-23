@@ -150,9 +150,12 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 	// trailing audio past the end of the video track (player freezes on the
 	// last frame while audio keeps playing).
 	//
-	// Instead, let ffmpeg normalize each stream to start at zero, and cut
-	// with -shortest so a stray partial segment on one side cannot extend the
-	// combined duration past the point where both tracks have real samples.
+	// Instead, let ffmpeg normalize each input to start at zero, add
+	// -shortest so a stray partial segment on one side cannot extend the
+	// combined duration past the point where both tracks have real samples,
+	// and keep -avoid_negative_ts make_zero so H.264 B-frame reordering
+	// (which produces negative DTS on the first packet) cannot let audio
+	// appear ahead of video on strict players.
 	args := []string{
 		"-y",
 		"-i", videoPath,
@@ -161,6 +164,7 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 		"-map", "1:a:0",
 		"-c", "copy",
 		"-shortest",
+		"-avoid_negative_ts", "make_zero",
 		outputPath,
 	}
 
