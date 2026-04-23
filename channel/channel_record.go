@@ -109,6 +109,7 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 	ch.InitSegment = nil
 	ch.AudioInitSegment = nil
 	ch.HasSeparateAudio = playlist.AudioPlaylistURL != ""
+	ch.switchRequested = false
 
 	if err := ch.NextFile(); err != nil {
 		return fmt.Errorf("next file: %w", err)
@@ -129,7 +130,7 @@ func (ch *Channel) RecordStream(ctx context.Context, client *chaturbate.Client) 
 		ch.Info("detected separate audio rendition, recording and muxing audio/video streams")
 	}
 
-	return playlist.WatchAVSegments(ctx, ch.HandleSegment, ch.HandleInitSegment, ch.HandleAudioSegment, ch.HandleAudioInitSegment)
+	return playlist.WatchAVSegments(ctx, ch.HandleSegment, ch.HandleInitSegment, ch.HandleAudioSegment, ch.HandleAudioInitSegment, ch.OnPollComplete)
 }
 
 // HandleInitSegment stores the fMP4 init segment and reopens the file with the correct extension.
@@ -235,13 +236,26 @@ func (ch *Channel) HandleSegment(b []byte, duration float64) error {
 	// Send an SSE update to update the view
 	ch.Update()
 
+	// Defer file rotation until the current poll cycle finishes so the
+	// paired audio segments land in the same file as the video ones.
 	if ch.ShouldSwitchFile() {
-		if err := ch.NextFile(); err != nil {
-			return fmt.Errorf("next file: %w", err)
-		}
-		ch.Info("max filesize or duration exceeded, new file created: %s", ch.File.Name())
+		ch.switchRequested = true
+	}
+	return nil
+}
+
+// OnPollComplete performs any file rotation requested during the poll cycle.
+// Called by WatchAVSegments after both video and audio playlists have been
+// processed, guaranteeing that rotation never splits an A/V pair.
+func (ch *Channel) OnPollComplete() error {
+	if !ch.switchRequested {
 		return nil
 	}
+	ch.switchRequested = false
+	if err := ch.NextFile(); err != nil {
+		return fmt.Errorf("next file: %w", err)
+	}
+	ch.Info("max filesize or duration exceeded, new file created: %s", ch.File.Name())
 	return nil
 }
 
