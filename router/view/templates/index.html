@@ -268,6 +268,7 @@
 
         <script>
             // Below md (768px), sidebar and main-content are stacked overlays — only one visible at a time.
+            // Entering detail pushes a history entry so the browser back button returns to the list.
             function isMobile() {
                 return window.matchMedia('(max-width: 767px)').matches;
             }
@@ -275,6 +276,10 @@
                 document.getElementById('sidebar').classList.toggle('max-md:hidden', view === 'detail');
                 document.getElementById('main-content').classList.toggle('max-md:hidden', view === 'list');
             }
+            window.addEventListener('popstate', function(e) {
+                if (!isMobile()) return;
+                setMobileView(e.state && e.state.mobileView === 'detail' ? 'detail' : 'list');
+            });
 
             // === Channel selection ===
             function selectChannel(username, skipMobileFlip) {
@@ -291,7 +296,10 @@
 
                 sessionStorage.setItem('selectedChannel', username);
 
-                if (!skipMobileFlip && isMobile()) setMobileView('detail');
+                if (!skipMobileFlip && isMobile()) {
+                    setMobileView('detail');
+                    history.pushState({ mobileView: 'detail' }, '');
+                }
             }
 
             // === Recording counter ===
