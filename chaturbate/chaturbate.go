@@ -403,7 +403,6 @@ func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Re
 		if seq == -1 || seq <= *lastSeq {
 			continue
 		}
-		*lastSeq = seq
 
 		segmentURL := resolveURL(playlistURL, v.URI)
 		resp, err := retry.DoWithData(
@@ -423,6 +422,7 @@ func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Re
 				return 0, fmt.Errorf("handler: %w", err)
 			}
 		}
+		*lastSeq = seq
 	}
 
 	return time.Duration(playlist.TargetDuration) * time.Second, nil
