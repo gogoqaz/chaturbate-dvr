@@ -143,19 +143,21 @@ func (ch *Channel) CompressFile(srcPath string) {
 
 // MuxAV combines separate video and audio source files into a single MP4 container.
 func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
-	// LL-HLS delivers video and audio on independent playlists, so their first
-	// fragment TFDTs rarely line up (audio commonly starts 1-3 seconds later
-	// than video in the live timeline). Preserving those absolute timestamps
-	// with -copyts made both streams keep their offset in the output, leaving
-	// trailing audio past the end of the video track (player freezes on the
-	// last frame while audio keeps playing).
+	// LL-HLS fragments are timestamped against an absolute presentation
+	// timeline (TFDT), so the raw video and audio fragments only line up
+	// if we preserve those timestamps with -copyts. Dropping -copyts made
+	// ffmpeg renormalize each input to start at zero independently — which
+	// is fine when the first fetched video/audio segments happened to
+	// represent the same wall-clock moment, but when they differ (very
+	// common on the very first poll of a live stream), the sound from the
+	// later audio segment ends up playing against the earlier video
+	// content, so users hear audio running seconds ahead of video.
 	//
-	// Instead, let ffmpeg normalize each input to start at zero, add
-	// -shortest so a stray partial segment on one side cannot extend the
-	// combined duration past the point where both tracks have real samples,
-	// and keep -avoid_negative_ts make_zero so H.264 B-frame reordering
-	// (which produces negative DTS on the first packet) cannot let audio
-	// appear ahead of video on strict players.
+	// Keep -copyts for content alignment, -shortest so a stray partial
+	// segment on one side cannot extend the combined duration past the
+	// point both tracks have real samples, and -avoid_negative_ts
+	// make_zero so H.264 B-frame reordering (negative DTS on the first
+	// packet) cannot desync the output on strict players.
 	args := []string{
 		"-y",
 		"-i", videoPath,
@@ -163,6 +165,7 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 		"-map", "0:v:0",
 		"-map", "1:a:0",
 		"-c", "copy",
+		"-copyts",
 		"-shortest",
 		"-avoid_negative_ts", "make_zero",
 		outputPath,
