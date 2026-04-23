@@ -189,7 +189,8 @@ func (ch *Channel) MuxAVNative(videoPath, audioPath, outputPath string) error {
 	}
 	defer outFile.Close()
 
-	if err := writeCombinedFragmentedMP4(outFile, videoFile, audioFile); err != nil {
+	warn := func(msg string) { ch.Info("mux: %s", msg) }
+	if err := writeCombinedFragmentedMP4(outFile, videoFile, audioFile, warn); err != nil {
 		outFile.Close()
 		os.Remove(outputPath)
 		return fmt.Errorf("native mux audio/video: %w", err)
@@ -199,7 +200,7 @@ func (ch *Channel) MuxAVNative(videoPath, audioPath, outputPath string) error {
 	return nil
 }
 
-func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) error {
+func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, warn func(string)) error {
 	_, videoTrex, err := sourceTrack(videoFile, "vide")
 	if err != nil {
 		return fmt.Errorf("load video track: %w", err)
@@ -212,7 +213,12 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) err
 	// Combine fragments BEFORE reassigning track IDs — GetFullSamples
 	// matches source traf boxes by trex.TrackID, which must still hold
 	// the original value from the source file.
-	segments, err := combineTrackFragments(collectFragments(videoFile), videoTrex, collectFragments(audioFile), audioTrex)
+	videoFragments := collectFragments(videoFile)
+	audioFragments := collectFragments(audioFile)
+	if warn != nil && len(videoFragments) != len(audioFragments) {
+		warn(fmt.Sprintf("fragment count mismatch (video=%d, audio=%d); output may have track-solo tail segments", len(videoFragments), len(audioFragments)))
+	}
+	segments, err := combineTrackFragments(videoFragments, videoTrex, audioFragments, audioTrex)
 	if err != nil {
 		return err
 	}
