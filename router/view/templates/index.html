@@ -25,11 +25,11 @@
         </script>
     </head>
 
-    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-screen font-sans overflow-hidden" hx-ext="sse">
-        <div class="flex h-screen">
+    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-dvh font-sans overflow-hidden" hx-ext="sse">
+        <div class="flex h-dvh">
 
             <!-- Sidebar -->
-            <aside class="w-[260px] bg-white dark:bg-zinc-800 border-r border-zinc-200 dark:border-zinc-700 flex flex-col shrink-0">
+            <aside id="sidebar" class="w-[260px] max-md:w-full bg-white dark:bg-zinc-800 border-r border-zinc-200 dark:border-zinc-700 max-md:border-r-0 flex flex-col shrink-0">
 
                 <!-- Sidebar Header -->
                 <div class="p-5 pb-4 border-b border-zinc-100 dark:border-zinc-700">
@@ -87,7 +87,7 @@
             <!-- / Sidebar -->
 
             <!-- Main Content -->
-            <main class="flex-1 flex flex-col overflow-hidden" {{ if .Channels }}sse-connect="/updates?stream=updates"{{ end }}>
+            <main id="main-content" class="flex-1 flex flex-col overflow-hidden max-md:hidden max-md:w-full" {{ if .Channels }}sse-connect="/updates?stream=updates"{{ end }}>
 
                 {{ if not .Channels }}
                 <!-- Blankslate -->
@@ -122,11 +122,11 @@
                 <div class="channel-detail hidden flex-1 flex flex-col overflow-hidden" data-channel="{{ .Username }}">
                     <div class="flex-1 flex overflow-hidden">
                         <!-- Info panel -->
-                        <div sse-swap="{{ .Username }}-info" class="w-[300px] p-5 border-r border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-y-auto" style="line-height: 1.45">
+                        <div sse-swap="{{ .Username }}-info" class="w-[300px] max-md:w-full p-5 border-r border-zinc-200 dark:border-zinc-700 max-md:border-r-0 bg-white dark:bg-zinc-800 overflow-y-auto" style="line-height: 1.45">
                             {{ template "channel_info" . }}
                         </div>
-                        <!-- Log panel -->
-                        <div class="flex-1 flex flex-col p-5 bg-zinc-50 dark:bg-zinc-900">
+                        <!-- Log panel (hidden on mobile; logs are unreadable on small screens) -->
+                        <div class="flex-1 max-md:hidden flex flex-col p-5 bg-zinc-50 dark:bg-zinc-900">
                             <textarea class="flex-1 min-h-0 w-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-3 font-mono text-xs text-zinc-500 dark:text-zinc-400 resize-none focus:outline-none"
                                       readonly sse-swap="{{ .Username }}-log">{{ range .Logs }}{{ . }}&NewLine;{{ end }}</textarea>
                             <label class="inline-flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500 cursor-pointer select-none mt-2">
@@ -267,6 +267,26 @@
         <!-- / Create Dialog -->
 
         <script>
+            // === Mobile view swap ===
+            // Below md (768px), sidebar and main-content are stacked overlays — only
+            // one visible at a time. We toggle `max-md:hidden` / `max-md:flex` on
+            // each. Desktop (>= md) always shows both side by side regardless.
+            function isMobile() {
+                return window.matchMedia('(max-width: 767px)').matches;
+            }
+            function showChannelList() {
+                var sidebar = document.getElementById('sidebar');
+                var main = document.getElementById('main-content');
+                if (sidebar) sidebar.classList.remove('max-md:hidden');
+                if (main) main.classList.add('max-md:hidden');
+            }
+            function showChannelDetail() {
+                var sidebar = document.getElementById('sidebar');
+                var main = document.getElementById('main-content');
+                if (sidebar) sidebar.classList.add('max-md:hidden');
+                if (main) main.classList.remove('max-md:hidden');
+            }
+
             // === Channel selection ===
             function selectChannel(username) {
                 document.querySelectorAll('.channel-detail').forEach(function(el) { el.classList.add('hidden'); });
@@ -281,6 +301,8 @@
                 });
 
                 sessionStorage.setItem('selectedChannel', username);
+
+                if (isMobile()) showChannelDetail();
             }
 
             // === Recording counter ===
@@ -395,6 +417,10 @@
                     var first = document.querySelector('.channel-item');
                     if (first) selectChannel(first.dataset.username);
                 }
+
+                // selectChannel flips to detail view on mobile; on first load we
+                // always land on the list so the user sees all channels first.
+                if (isMobile()) showChannelList();
 
                 document.querySelectorAll("textarea").forEach(function(ta) {
                     ta.scrollTop = ta.scrollHeight;
