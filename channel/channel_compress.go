@@ -143,6 +143,16 @@ func (ch *Channel) CompressFile(srcPath string) {
 
 // MuxAV combines separate video and audio source files into a single MP4 container.
 func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
+	// LL-HLS delivers video and audio on independent playlists, so their first
+	// fragment TFDTs rarely line up (audio commonly starts 1-3 seconds later
+	// than video in the live timeline). Preserving those absolute timestamps
+	// with -copyts made both streams keep their offset in the output, leaving
+	// trailing audio past the end of the video track (player freezes on the
+	// last frame while audio keeps playing).
+	//
+	// Instead, let ffmpeg normalize each stream to start at zero, and cut
+	// with -shortest so a stray partial segment on one side cannot extend the
+	// combined duration past the point where both tracks have real samples.
 	args := []string{
 		"-y",
 		"-i", videoPath,
@@ -150,8 +160,7 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 		"-map", "0:v:0",
 		"-map", "1:a:0",
 		"-c", "copy",
-		"-copyts",
-		"-avoid_negative_ts", "make_zero",
+		"-shortest",
 		outputPath,
 	}
 
