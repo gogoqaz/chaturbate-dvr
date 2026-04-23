@@ -236,11 +236,24 @@ func (ch *Channel) HandleSegment(b []byte, duration float64) error {
 	// Send an SSE update to update the view
 	ch.Update()
 
-	// Defer file rotation until the current poll cycle finishes so the
-	// paired audio segments land in the same file as the video ones.
-	if ch.ShouldSwitchFile() {
-		ch.switchRequested = true
+	if !ch.ShouldSwitchFile() {
+		return nil
 	}
+
+	// For LL-HLS streams with separate audio, defer the rotation until the
+	// current poll cycle finishes so the paired audio segments land in the
+	// same file as the video ones. Single-stream recordings have no pairing
+	// risk, and deferring would let processMediaPlaylist keep appending a
+	// backlog of catch-up segments past the MaxFilesize/MaxDuration limit.
+	if ch.HasSeparateAudio {
+		ch.switchRequested = true
+		return nil
+	}
+
+	if err := ch.NextFile(); err != nil {
+		return fmt.Errorf("next file: %w", err)
+	}
+	ch.Info("max filesize or duration exceeded, new file created: %s", ch.File.Name())
 	return nil
 }
 

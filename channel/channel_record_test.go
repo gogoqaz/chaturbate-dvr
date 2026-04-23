@@ -193,7 +193,7 @@ func TestCreateNewFileKeepsLegacyHLSAsTS(t *testing.T) {
 	}
 }
 
-func TestHandleSegmentDefersRotationUntilPollComplete(t *testing.T) {
+func TestHandleSegmentDefersRotationForSeparateAudio(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -204,6 +204,7 @@ func TestHandleSegmentDefersRotationUntilPollComplete(t *testing.T) {
 		MaxFilesize: 1, // 1 MiB threshold
 	})
 	ch.StreamedAt = 1
+	ch.HasSeparateAudio = true
 
 	if err := ch.NextFile(); err != nil {
 		t.Fatalf("NextFile() error = %v", err)
@@ -232,6 +233,38 @@ func TestHandleSegmentDefersRotationUntilPollComplete(t *testing.T) {
 	}
 	if ch.File.Name() == firstName {
 		t.Fatalf("file not rotated after OnPollComplete (still %q)", firstName)
+	}
+}
+
+func TestHandleSegmentRotatesImmediatelyForSingleStream(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pattern := filepath.Join(dir, "single{{if .Sequence}}_{{.Sequence}}{{end}}")
+	ch := New(&entity.ChannelConfig{
+		Username:    "alice",
+		Pattern:     pattern,
+		MaxFilesize: 1, // 1 MiB threshold
+	})
+	ch.StreamedAt = 1
+	// HasSeparateAudio stays false: no audio playlist, no pairing risk.
+
+	if err := ch.NextFile(); err != nil {
+		t.Fatalf("NextFile() error = %v", err)
+	}
+	t.Cleanup(func() { _ = ch.Cleanup() })
+
+	firstName := ch.File.Name()
+
+	if err := ch.HandleSegment(make([]byte, 2*1024*1024), 1); err != nil {
+		t.Fatalf("HandleSegment() error = %v", err)
+	}
+
+	if ch.switchRequested {
+		t.Fatalf("switchRequested = true for single-stream recording, want false")
+	}
+	if ch.File.Name() == firstName {
+		t.Fatalf("file not rotated immediately for single-stream recording (still %q)", firstName)
 	}
 }
 
