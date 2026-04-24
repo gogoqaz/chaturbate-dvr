@@ -143,6 +143,21 @@ func (ch *Channel) CompressFile(srcPath string) {
 
 // MuxAV combines separate video and audio source files into a single MP4 container.
 func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
+	// LL-HLS fragments are timestamped against an absolute presentation
+	// timeline (TFDT), so the raw video and audio fragments only line up
+	// if we preserve those timestamps with -copyts. Dropping -copyts made
+	// ffmpeg renormalize each input to start at zero independently — which
+	// is fine when the first fetched video/audio segments happened to
+	// represent the same wall-clock moment, but when they differ (very
+	// common on the very first poll of a live stream), the sound from the
+	// later audio segment ends up playing against the earlier video
+	// content, so users hear audio running seconds ahead of video.
+	//
+	// Keep -copyts for content alignment, -shortest so a stray partial
+	// segment on one side cannot extend the combined duration past the
+	// point both tracks have real samples, and -avoid_negative_ts
+	// make_zero so H.264 B-frame reordering (negative DTS on the first
+	// packet) cannot desync the output on strict players.
 	args := []string{
 		"-y",
 		"-i", videoPath,
@@ -151,6 +166,7 @@ func (ch *Channel) MuxAV(videoPath, audioPath, outputPath string) error {
 		"-map", "1:a:0",
 		"-c", "copy",
 		"-copyts",
+		"-shortest",
 		"-avoid_negative_ts", "make_zero",
 		outputPath,
 	}
@@ -189,7 +205,8 @@ func (ch *Channel) MuxAVNative(videoPath, audioPath, outputPath string) error {
 	}
 	defer outFile.Close()
 
-	if err := writeCombinedFragmentedMP4(outFile, videoFile, audioFile); err != nil {
+	warn := func(msg string) { ch.Info("mux: %s", msg) }
+	if err := writeCombinedFragmentedMP4(outFile, videoFile, audioFile, warn); err != nil {
 		outFile.Close()
 		os.Remove(outputPath)
 		return fmt.Errorf("native mux audio/video: %w", err)
@@ -199,7 +216,7 @@ func (ch *Channel) MuxAVNative(videoPath, audioPath, outputPath string) error {
 	return nil
 }
 
-func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) error {
+func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, warn func(string)) error {
 	_, videoTrex, err := sourceTrack(videoFile, "vide")
 	if err != nil {
 		return fmt.Errorf("load video track: %w", err)
@@ -212,7 +229,12 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File) err
 	// Combine fragments BEFORE reassigning track IDs — GetFullSamples
 	// matches source traf boxes by trex.TrackID, which must still hold
 	// the original value from the source file.
-	segments, err := combineTrackFragments(collectFragments(videoFile), videoTrex, collectFragments(audioFile), audioTrex)
+	videoFragments := collectFragments(videoFile)
+	audioFragments := collectFragments(audioFile)
+	if warn != nil && len(videoFragments) != len(audioFragments) {
+		warn(fmt.Sprintf("fragment count mismatch (video=%d, audio=%d); output may have track-solo tail segments", len(videoFragments), len(audioFragments)))
+	}
+	segments, err := combineTrackFragments(videoFragments, videoTrex, audioFragments, audioTrex)
 	if err != nil {
 		return err
 	}

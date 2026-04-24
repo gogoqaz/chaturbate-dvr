@@ -300,13 +300,13 @@ type WatchHandler func(b []byte, duration float64) error
 // InitHandler is called once when an init segment (fMP4 moov atom) is detected.
 type InitHandler func(initData []byte) error
 
-// WatchSegments continuously fetches and processes video segments.
-func (p *Playlist) WatchSegments(ctx context.Context, handler WatchHandler, initHandler InitHandler) error {
-	return p.WatchAVSegments(ctx, handler, initHandler, nil, nil)
-}
+// PollCompleteHandler is called once per poll cycle after both video and
+// audio playlists have been processed. Used to coordinate side effects that
+// must not interleave with segment processing (e.g. file rotation).
+type PollCompleteHandler func() error
 
 // WatchAVSegments continuously fetches and processes video segments, and optional separate audio segments.
-func (p *Playlist) WatchAVSegments(ctx context.Context, handler WatchHandler, initHandler InitHandler, audioHandler WatchHandler, audioInitHandler InitHandler) error {
+func (p *Playlist) WatchAVSegments(ctx context.Context, handler WatchHandler, initHandler InitHandler, audioHandler WatchHandler, audioInitHandler InitHandler, pollComplete PollCompleteHandler) error {
 	var (
 		client           = internal.NewReq()
 		lastSeq          = -1
@@ -326,6 +326,12 @@ func (p *Playlist) WatchAVSegments(ctx context.Context, handler WatchHandler, in
 				return fmt.Errorf("audio: %w", err)
 			}
 			pollInterval = pickPollInterval(pollInterval, audioInterval)
+		}
+
+		if pollComplete != nil {
+			if err := pollComplete(); err != nil {
+				return fmt.Errorf("poll complete: %w", err)
+			}
 		}
 
 		// Use the playlist's target duration as the polling interval (minimum 2s)
@@ -403,7 +409,6 @@ func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Re
 		if seq == -1 || seq <= *lastSeq {
 			continue
 		}
-		*lastSeq = seq
 
 		segmentURL := resolveURL(playlistURL, v.URI)
 		resp, err := retry.DoWithData(
@@ -423,6 +428,7 @@ func (p *Playlist) processMediaPlaylist(ctx context.Context, client *internal.Re
 				return 0, fmt.Errorf("handler: %w", err)
 			}
 		}
+		*lastSeq = seq
 	}
 
 	return time.Duration(playlist.TargetDuration) * time.Second, nil

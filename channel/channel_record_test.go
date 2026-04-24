@@ -192,3 +192,178 @@ func TestCreateNewFileKeepsLegacyHLSAsTS(t *testing.T) {
 		t.Fatalf("expected legacy mp4 output to not exist, stat err = %v", err)
 	}
 }
+
+func TestHandleSegmentDefersRotationForSeparateAudio(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pattern := filepath.Join(dir, "rotating{{if .Sequence}}_{{.Sequence}}{{end}}")
+	ch := New(&entity.ChannelConfig{
+		Username:    "alice",
+		Pattern:     pattern,
+		MaxFilesize: 1, // 1 MiB threshold
+	})
+	ch.StreamedAt = 1
+	ch.HasSeparateAudio = true
+
+	if err := ch.NextFile(); err != nil {
+		t.Fatalf("NextFile() error = %v", err)
+	}
+	t.Cleanup(func() { _ = ch.Cleanup() })
+
+	firstName := ch.File.Name()
+
+	// Trigger ShouldSwitchFile by writing past MaxFilesize.
+	if err := ch.HandleSegment(make([]byte, 2*1024*1024), 1); err != nil {
+		t.Fatalf("HandleSegment() error = %v", err)
+	}
+
+	if !ch.switchRequested {
+		t.Fatalf("switchRequested = false after oversized write, want true")
+	}
+	if ch.File.Name() != firstName {
+		t.Fatalf("file rotated inside HandleSegment: %q -> %q", firstName, ch.File.Name())
+	}
+
+	if err := ch.OnPollComplete(); err != nil {
+		t.Fatalf("OnPollComplete() error = %v", err)
+	}
+	if ch.switchRequested {
+		t.Fatalf("switchRequested still set after OnPollComplete")
+	}
+	if ch.File.Name() == firstName {
+		t.Fatalf("file not rotated after OnPollComplete (still %q)", firstName)
+	}
+}
+
+func TestHandleSegmentRotatesImmediatelyForSingleStream(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	pattern := filepath.Join(dir, "single{{if .Sequence}}_{{.Sequence}}{{end}}")
+	ch := New(&entity.ChannelConfig{
+		Username:    "alice",
+		Pattern:     pattern,
+		MaxFilesize: 1, // 1 MiB threshold
+	})
+	ch.StreamedAt = 1
+	// HasSeparateAudio stays false: no audio playlist, no pairing risk.
+
+	if err := ch.NextFile(); err != nil {
+		t.Fatalf("NextFile() error = %v", err)
+	}
+	t.Cleanup(func() { _ = ch.Cleanup() })
+
+	firstName := ch.File.Name()
+
+	if err := ch.HandleSegment(make([]byte, 2*1024*1024), 1); err != nil {
+		t.Fatalf("HandleSegment() error = %v", err)
+	}
+
+	if ch.switchRequested {
+		t.Fatalf("switchRequested = true for single-stream recording, want false")
+	}
+	if ch.File.Name() == firstName {
+		t.Fatalf("file not rotated immediately for single-stream recording (still %q)", firstName)
+	}
+}
+
+func TestOnPollCompleteNoopWhenNothingRequested(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ch := New(&entity.ChannelConfig{
+		Username: "alice",
+		Pattern:  filepath.Join(dir, "x"),
+	})
+
+	if err := ch.OnPollComplete(); err != nil {
+		t.Fatalf("OnPollComplete() with no flag error = %v", err)
+	}
+}
+
+func TestCleanupPreservesAudioOnlyWhenVideoMissing(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "recording")
+	audioPath := base + ".audio.mp4"
+	audioFile, err := os.OpenFile(audioPath, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open audio file: %v", err)
+	}
+	if _, err := audioFile.Write([]byte("audio-payload")); err != nil {
+		t.Fatalf("write audio file: %v", err)
+	}
+
+	ch := New(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	ch.HasSeparateAudio = true
+	ch.CurrentFilename = base
+	ch.AudioFile = audioFile
+
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+	if _, err := os.Stat(audioPath); err != nil {
+		t.Fatalf("audio file should be preserved, stat err = %v", err)
+	}
+}
+
+func TestCleanupPreservesVideoOnlyWhenAudioMissing(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "recording")
+	videoPath := base + ".video.mp4"
+	videoFile, err := os.OpenFile(videoPath, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open video file: %v", err)
+	}
+	if _, err := videoFile.Write([]byte("video-payload")); err != nil {
+		t.Fatalf("write video file: %v", err)
+	}
+
+	ch := New(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	ch.HasSeparateAudio = true
+	ch.CurrentFilename = base
+	ch.File = videoFile
+
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+	if _, err := os.Stat(videoPath); err != nil {
+		t.Fatalf("video file should be preserved, stat err = %v", err)
+	}
+}
+
+func TestMuxOutputLooksValid(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	writeSized := func(name string, size int) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, make([]byte, size), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return p
+	}
+
+	videoPath := writeSized("v", 1000)
+	audioPath := writeSized("a", 200)
+	videoInfo, _ := os.Stat(videoPath)
+	audioInfo, _ := os.Stat(audioPath)
+
+	okOutput := writeSized("ok.mp4", 900) // 900 >= (1200 / 2)
+	tinyOutput := writeSized("tiny.mp4", 100)
+	emptyOutput := writeSized("empty.mp4", 0)
+
+	if ok, reason := muxOutputLooksValid(okOutput, videoInfo, audioInfo); !ok {
+		t.Fatalf("expected valid, got reason %q", reason)
+	}
+	if ok, _ := muxOutputLooksValid(tinyOutput, videoInfo, audioInfo); ok {
+		t.Fatalf("expected invalid for tiny output")
+	}
+	if ok, _ := muxOutputLooksValid(emptyOutput, videoInfo, audioInfo); ok {
+		t.Fatalf("expected invalid for empty output")
+	}
+	if ok, _ := muxOutputLooksValid(filepath.Join(dir, "missing.mp4"), videoInfo, audioInfo); ok {
+		t.Fatalf("expected invalid for missing output")
+	}
+}

@@ -72,14 +72,22 @@ func (ch *Channel) Cleanup() error {
 		switch {
 		case videoInfo == nil && audioInfo == nil:
 			return nil
-		case videoInfo == nil || audioInfo == nil:
-			if videoFilename != "" {
-				_ = os.Remove(videoFilename)
+		case videoInfo == nil:
+			ch.Info("mux: video track missing; preserving audio-only file %s", filepath.Base(audioFilename))
+			if ch.Config.Compress {
+				ch.CompressFile(audioFilename)
+			} else {
+				ch.MoveToOutputDir(audioFilename)
 			}
-			if audioFilename != "" {
-				_ = os.Remove(audioFilename)
+			return nil
+		case audioInfo == nil:
+			ch.Info("mux: audio track missing; preserving video-only file %s", filepath.Base(videoFilename))
+			if ch.Config.Compress {
+				ch.CompressFile(videoFilename)
+			} else {
+				ch.MoveToOutputDir(videoFilename)
 			}
-			return fmt.Errorf("separate audio stream incomplete, dropping partial output")
+			return nil
 		}
 
 		finalOutput := currentFilename + ".mp4"
@@ -89,6 +97,16 @@ func (ch *Channel) Cleanup() error {
 				return fmt.Errorf("mux audio/video: %w", nativeErr)
 			}
 		}
+
+		// Sanity-check the muxed file before discarding the sidecars. If the
+		// output is missing or implausibly small, keep the sidecars so the
+		// user can recover manually (or rerun mux with external tools).
+		if ok, reason := muxOutputLooksValid(finalOutput, videoInfo, audioInfo); !ok {
+			ch.Error("mux: output looks corrupt (%s); keeping sidecars %s and %s", reason, filepath.Base(videoFilename), filepath.Base(audioFilename))
+			_ = os.Remove(finalOutput)
+			return nil
+		}
+
 		_ = os.Remove(videoFilename)
 		_ = os.Remove(audioFilename)
 
@@ -109,6 +127,29 @@ func (ch *Channel) Cleanup() error {
 	}
 
 	return nil
+}
+
+// muxOutputLooksValid returns true if the muxed MP4 appears to contain most
+// of the source bytes. `-c copy` just repackages, so the output should be
+// within a reasonable fraction of the combined input size; anything much
+// smaller means the muxer bailed out early and the sidecars are more
+// valuable than the corrupt result.
+func muxOutputLooksValid(outputPath string, videoInfo, audioInfo os.FileInfo) (bool, string) {
+	finalInfo, err := os.Stat(outputPath)
+	if err != nil {
+		return false, fmt.Sprintf("stat: %s", err.Error())
+	}
+	if finalInfo.Size() == 0 {
+		return false, "empty output"
+	}
+	inputSize := videoInfo.Size() + audioInfo.Size()
+	if inputSize == 0 {
+		return true, ""
+	}
+	if finalInfo.Size()*2 < inputSize {
+		return false, fmt.Sprintf("output %d bytes, inputs %d bytes", finalInfo.Size(), inputSize)
+	}
+	return true, ""
 }
 
 // MoveToOutputDir relocates a finalized recording into server.Config.OutputDir.
