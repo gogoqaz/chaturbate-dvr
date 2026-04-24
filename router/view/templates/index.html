@@ -278,8 +278,9 @@
                 document.getElementById('sidebar').classList.toggle('max-md:hidden', view === 'detail');
                 document.getElementById('main-content').classList.toggle('max-md:hidden', view === 'list');
             }
+            // Sync classes even on desktop — max-md:hidden is inert there, but skipping the sync
+            // lets DOM and history diverge after a viewport resize.
             window.addEventListener('popstate', function(e) {
-                if (!isMobile()) return;
                 setMobileView(e.state && e.state.mobileView === 'detail' ? 'detail' : 'list');
             });
 
