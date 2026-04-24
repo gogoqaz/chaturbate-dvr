@@ -25,11 +25,11 @@
         </script>
     </head>
 
-    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-screen font-sans overflow-hidden" hx-ext="sse">
-        <div class="flex h-screen">
+    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-dvh font-sans overflow-hidden" hx-ext="sse">
+        <div class="flex h-dvh">
 
             <!-- Sidebar -->
-            <aside class="w-[260px] bg-white dark:bg-zinc-800 border-r border-zinc-200 dark:border-zinc-700 flex flex-col shrink-0">
+            <aside id="sidebar" class="w-[260px] max-md:w-full bg-white dark:bg-zinc-800 border-r border-zinc-200 dark:border-zinc-700 max-md:border-r-0 flex flex-col shrink-0">
 
                 <!-- Sidebar Header -->
                 <div class="p-5 pb-4 border-b border-zinc-100 dark:border-zinc-700">
@@ -57,15 +57,17 @@
                 <!-- Channel List -->
                 <div class="flex-1 overflow-y-auto p-2">
                     {{ range .Channels }}
-                    <div class="channel-item flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700 mb-0.5"
-                         data-username="{{ .Username }}"
-                         data-priority="{{ if and .IsOnline (not .IsPaused) }}0{{ else if .IsPaused }}{{ if .IsOnline }}2{{ else }}3{{ end }}{{ else }}1{{ end }}"
-                         onclick="selectChannel('{{ .Username }}')">
+                    <button type="button"
+                            class="channel-item w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 dark:focus-visible:ring-zinc-500 mb-0.5"
+                            data-username="{{ .Username }}"
+                            data-priority="{{ if and .IsOnline (not .IsPaused) }}0{{ else if .IsPaused }}{{ if .IsOnline }}2{{ else }}3{{ end }}{{ else }}1{{ end }}"
+                            aria-current="false"
+                            onclick="selectChannel('{{ .Username }}')">
                         <span class="w-2 h-2 rounded-full shrink-0 {{ if and .IsOnline (not .IsPaused) }}bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]{{ else if .IsPaused }}bg-red-500{{ else }}bg-zinc-300{{ end }}"
                               data-status-dot="{{ .Username }}"></span>
                         <span class="text-sm font-semibold flex-1 truncate">{{ .Username }}</span>
                         <span class="text-[10px] text-zinc-400 uppercase" data-status-text="{{ .Username }}">{{ if and .IsOnline (not .IsPaused) }}Rec{{ else if .RoomStatus }}{{ .RoomStatus }}{{ end }}</span>
-                    </div>
+                    </button>
                     {{ end }}
                     {{ if not .Channels }}
                     <div class="flex-1 flex items-center justify-center text-sm text-zinc-400 py-8">No channels added</div>
@@ -87,7 +89,7 @@
             <!-- / Sidebar -->
 
             <!-- Main Content -->
-            <main class="flex-1 flex flex-col overflow-hidden" {{ if .Channels }}sse-connect="/updates?stream=updates"{{ end }}>
+            <main id="main-content" class="flex-1 flex flex-col overflow-hidden max-md:hidden max-md:w-full" {{ if .Channels }}sse-connect="/updates?stream=updates"{{ end }}>
 
                 {{ if not .Channels }}
                 <!-- Blankslate -->
@@ -122,11 +124,11 @@
                 <div class="channel-detail hidden flex-1 flex flex-col overflow-hidden" data-channel="{{ .Username }}">
                     <div class="flex-1 flex overflow-hidden">
                         <!-- Info panel -->
-                        <div sse-swap="{{ .Username }}-info" class="w-[300px] p-5 border-r border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 overflow-y-auto" style="line-height: 1.45">
+                        <div sse-swap="{{ .Username }}-info" class="w-[300px] max-md:w-full p-5 border-r border-zinc-200 dark:border-zinc-700 max-md:border-r-0 bg-white dark:bg-zinc-800 overflow-y-auto" style="line-height: 1.45">
                             {{ template "channel_info" . }}
                         </div>
-                        <!-- Log panel -->
-                        <div class="flex-1 flex flex-col p-5 bg-zinc-50 dark:bg-zinc-900">
+                        <!-- Log panel (hidden on mobile; logs are unreadable on small screens) -->
+                        <div class="flex-1 max-md:hidden flex flex-col p-5 bg-zinc-50 dark:bg-zinc-900">
                             <textarea class="flex-1 min-h-0 w-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-3 font-mono text-xs text-zinc-500 dark:text-zinc-400 resize-none focus:outline-none"
                                       readonly sse-swap="{{ .Username }}-log">{{ range .Logs }}{{ . }}&NewLine;{{ end }}</textarea>
                             <label class="inline-flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-500 cursor-pointer select-none mt-2">
@@ -267,8 +269,23 @@
         <!-- / Create Dialog -->
 
         <script>
+            // Below md (768px), sidebar and main-content are stacked overlays — only one visible at a time.
+            // Entering detail pushes a history entry so the browser back button returns to the list.
+            function isMobile() {
+                return window.matchMedia('(max-width: 767px)').matches;
+            }
+            function setMobileView(view) { // 'list' | 'detail'
+                document.getElementById('sidebar').classList.toggle('max-md:hidden', view === 'detail');
+                document.getElementById('main-content').classList.toggle('max-md:hidden', view === 'list');
+            }
+            // Sync classes even on desktop — max-md:hidden is inert there, but skipping the sync
+            // lets DOM and history diverge after a viewport resize.
+            window.addEventListener('popstate', function(e) {
+                setMobileView(e.state && e.state.mobileView === 'detail' ? 'detail' : 'list');
+            });
+
             // === Channel selection ===
-            function selectChannel(username) {
+            function selectChannel(username, skipMobileFlip) {
                 document.querySelectorAll('.channel-detail').forEach(function(el) { el.classList.add('hidden'); });
                 var noSel = document.getElementById('no-selection');
                 if (noSel) noSel.classList.add('hidden');
@@ -277,10 +294,17 @@
                 if (panel) panel.classList.remove('hidden');
 
                 document.querySelectorAll('.channel-item').forEach(function(el) {
-                    el.classList.toggle('selected', el.dataset.username === username);
+                    var isSelected = el.dataset.username === username;
+                    el.classList.toggle('selected', isSelected);
+                    el.setAttribute('aria-current', isSelected ? 'true' : 'false');
                 });
 
                 sessionStorage.setItem('selectedChannel', username);
+
+                if (!skipMobileFlip && isMobile()) {
+                    setMobileView('detail');
+                    history.pushState({ mobileView: 'detail' }, '');
+                }
             }
 
             // === Recording counter ===
@@ -387,13 +411,14 @@
             document.addEventListener("DOMContentLoaded", function() {
                 updateRecordingCount();
 
+                // First load always lands on the channel list — skip the mobile flip into detail view.
                 var saved = sessionStorage.getItem('selectedChannel');
                 if (saved && document.querySelector('[data-channel="' + saved + '"]')) {
-                    selectChannel(saved);
+                    selectChannel(saved, true);
                 } else {
                     sessionStorage.removeItem('selectedChannel');
                     var first = document.querySelector('.channel-item');
-                    if (first) selectChannel(first.dataset.username);
+                    if (first) selectChannel(first.dataset.username, true);
                 }
 
                 document.querySelectorAll("textarea").forEach(function(ta) {
