@@ -59,6 +59,7 @@ func TestDiskUsageTemplateHasAccessibleMeterText(t *testing.T) {
 		UsedPercent: 42,
 		Used:        "42 GB",
 		Free:        "58 GB",
+		FolderSize:  "3.00 KB",
 	}
 	if err := DiskUsageTpl.ExecuteTemplate(&b, "disk_usage", usage); err != nil {
 		t.Fatalf("ExecuteTemplate() error = %v", err)
@@ -75,6 +76,8 @@ func TestDiskUsageTemplateHasAccessibleMeterText(t *testing.T) {
 		`Healthy`,
 		`42 GB used`,
 		`58 GB free`,
+		`Folder`,
+		`3.00 KB`,
 		`/recordings`,
 	} {
 		if !strings.Contains(html, want) {

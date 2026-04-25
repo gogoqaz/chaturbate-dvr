@@ -22,6 +22,14 @@
     <span>{{ .Used }} used</span>
     <span class="font-semibold {{ if .IsWarning }}text-red-600 dark:text-red-400{{ else }}text-zinc-700 dark:text-zinc-200{{ end }}">{{ .Free }} free</span>
   </div>
+  <div class="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+    <span>Folder</span>
+    {{ if .FolderSizeError }}
+    <span>Folder unavailable</span>
+    {{ else }}
+    <span>{{ .FolderSize }}</span>
+    {{ end }}
+  </div>
   <div class="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500" title="{{ .Path }}">{{ .Path }}</div>
   {{ end }}
 </div>

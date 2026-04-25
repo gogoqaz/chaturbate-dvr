@@ -3,6 +3,7 @@ package manager
 import (
 	"errors"
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -136,6 +137,62 @@ func TestBuildDiskUsageInfoDiskStatsFailure(t *testing.T) {
 	}
 	if info.IsWarning {
 		t.Fatal("IsWarning = true for unavailable disk info, want false")
+	}
+}
+
+func TestBuildDiskUsageInfoIncludesFolderSize(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "one.ts"), make([]byte, 1024), 0666); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	nested := filepath.Join(dir, "nested")
+	if err := os.Mkdir(nested, 0777); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "two.ts"), make([]byte, 2048), 0666); err != nil {
+		t.Fatalf("WriteFile() nested error = %v", err)
+	}
+
+	original := diskUsageStatsFn
+	diskUsageStatsFn = func(string) (diskUsageStats, error) {
+		return diskUsageStats{totalBytes: 100 * 1024, freeBytes: 50 * 1024}, nil
+	}
+	t.Cleanup(func() {
+		diskUsageStatsFn = original
+	})
+
+	info := buildDiskUsageInfo(dir)
+	if info.FolderSizeError != "" {
+		t.Fatalf("FolderSizeError = %q, want empty", info.FolderSizeError)
+	}
+	if info.FolderSizeBytes != 3072 {
+		t.Fatalf("FolderSizeBytes = %d, want 3072", info.FolderSizeBytes)
+	}
+	if info.FolderSize != "3.00 KB" {
+		t.Fatalf("FolderSize = %q, want %q", info.FolderSize, "3.00 KB")
+	}
+}
+
+func TestBuildDiskUsageInfoFolderSizeUnavailable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+
+	original := diskUsageStatsFn
+	diskUsageStatsFn = func(string) (diskUsageStats, error) {
+		return diskUsageStats{totalBytes: 100 * 1024, freeBytes: 50 * 1024}, nil
+	}
+	t.Cleanup(func() {
+		diskUsageStatsFn = original
+	})
+
+	info := buildDiskUsageInfo(dir)
+	if info.Error != "" {
+		t.Fatalf("Error = %q, want empty disk usage error", info.Error)
+	}
+	if info.FolderSizeError == "" {
+		t.Fatal("FolderSizeError is empty, want missing folder error")
+	}
+	if info.FolderSize != "" {
+		t.Fatalf("FolderSize = %q, want empty", info.FolderSize)
 	}
 }
 

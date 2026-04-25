@@ -52,17 +52,20 @@ type ChannelInfo struct {
 
 // DiskUsageInfo represents recording disk usage for the Web UI.
 type DiskUsageInfo struct {
-	Path          string
-	TotalBytes    uint64
-	UsedBytes     uint64
-	FreeBytes     uint64
-	UsedPercent   int
-	Total         string
-	Used          string
-	Free          string
-	IsWarning     bool
-	WarningReason string
-	Error         string
+	Path            string
+	TotalBytes      uint64
+	UsedBytes       uint64
+	FreeBytes       uint64
+	UsedPercent     int
+	Total           string
+	Used            string
+	Free            string
+	FolderSizeBytes uint64
+	FolderSize      string
+	FolderSizeError string
+	IsWarning       bool
+	WarningReason   string
+	Error           string
 }
 
 // Config holds the configuration for the application.

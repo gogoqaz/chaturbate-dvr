@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -121,7 +122,44 @@ func buildDiskUsageInfo(path string) *entity.DiskUsageInfo {
 	info.Free = formatDiskBytes(freeBytes)
 	info.IsWarning = isWarning
 	info.WarningReason = warningReason
+	folderSize, err := folderSizeBytes(path)
+	if err != nil {
+		info.FolderSizeError = err.Error()
+	} else {
+		info.FolderSizeBytes = folderSize
+		info.FolderSize = formatDiskBytes(folderSize)
+	}
 	return info
+}
+
+func folderSizeBytes(path string) (uint64, error) {
+	var size uint64
+	err := filepath.WalkDir(path, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		fileSize := uint64(info.Size())
+		sum, carry := bits.Add64(size, fileSize, 0)
+		if carry != 0 {
+			return fmt.Errorf("folder size overflow")
+		}
+		size = sum
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return size, nil
 }
 
 func nearestExistingDir(path string) string {
