@@ -65,7 +65,7 @@ func resolveDefaultRecordingDir(pattern string) string {
 
 	tpl, err := template.New("recording-dir").Parse(pattern)
 	if err != nil {
-		return filepath.Dir(pattern)
+		return "videos"
 	}
 
 	var buf bytes.Buffer
@@ -89,7 +89,7 @@ func resolveDefaultRecordingDir(pattern string) string {
 		Sequence: 1,
 	}
 	if err := tpl.Execute(&buf, data); err != nil {
-		return filepath.Dir(pattern)
+		return "videos"
 	}
 	return filepath.Dir(buf.String())
 }
@@ -154,10 +154,10 @@ func nearestExistingDir(path string) string {
 }
 
 func diskUsageWarning(freeBytes, totalBytes uint64) (bool, string) {
-	if totalBytes > diskWarningFreeBytes && freeBytes <= diskWarningFreeBytes {
+	if freeBytes <= diskWarningFreeBytes {
 		return true, "20 GB free or less"
 	}
-	if totalBytes > 0 && freeBytes*100 <= totalBytes*(diskWarningFreePercent+1) {
+	if totalBytes > 0 && freeBytes*100 <= totalBytes*diskWarningFreePercent {
 		return true, "10% free or less"
 	}
 	return false, ""

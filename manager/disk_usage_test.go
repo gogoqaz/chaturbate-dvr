@@ -7,7 +7,7 @@ import (
 )
 
 func TestDiskUsageWarningThresholdPercent(t *testing.T) {
-	isWarning, reason := diskUsageWarning(11, 100)
+	isWarning, reason := diskUsageWarning(50*1024*1024*1024, 500*1024*1024*1024)
 
 	if !isWarning {
 		t.Fatal("diskUsageWarning() = false, want true")
@@ -17,8 +17,30 @@ func TestDiskUsageWarningThresholdPercent(t *testing.T) {
 	}
 }
 
+func TestDiskUsageWarningThresholdPercentHealthyAboveTenPercent(t *testing.T) {
+	isWarning, reason := diskUsageWarning(55*1024*1024*1024, 500*1024*1024*1024)
+
+	if isWarning {
+		t.Fatalf("diskUsageWarning() = true, want false, reason = %q", reason)
+	}
+	if reason != "" {
+		t.Fatalf("warning reason = %q, want empty", reason)
+	}
+}
+
 func TestDiskUsageWarningThresholdBytes(t *testing.T) {
 	isWarning, reason := diskUsageWarning(20*1024*1024*1024, 500*1024*1024*1024)
+
+	if !isWarning {
+		t.Fatal("diskUsageWarning() = false, want true")
+	}
+	if reason != "20 GB free or less" {
+		t.Fatalf("warning reason = %q, want %q", reason, "20 GB free or less")
+	}
+}
+
+func TestDiskUsageWarningThresholdBytesOnSmallFilesystem(t *testing.T) {
+	isWarning, reason := diskUsageWarning(15*1024*1024*1024, 15*1024*1024*1024)
 
 	if !isWarning {
 		t.Fatal("diskUsageWarning() = false, want true")
@@ -41,6 +63,14 @@ func TestDiskUsageWarningThresholdHealthy(t *testing.T) {
 
 func TestResolveDefaultRecordingDirFromPattern(t *testing.T) {
 	dir := resolveDefaultRecordingDir(filepath.Join("videos", "{{.Username}}_{{.Year}}-{{.Month}}-{{.Day}}"))
+
+	if dir != "videos" {
+		t.Fatalf("resolveDefaultRecordingDir() = %q, want %q", dir, "videos")
+	}
+}
+
+func TestResolveDefaultRecordingDirInvalidPatternFallsBackToVideos(t *testing.T) {
+	dir := resolveDefaultRecordingDir("{{")
 
 	if dir != "videos" {
 		t.Fatalf("resolveDefaultRecordingDir() = %q, want %q", dir, "videos")
