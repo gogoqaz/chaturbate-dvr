@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/r3labs/sse/v2"
 	"github.com/teacat/chaturbate-dvr/channel"
@@ -32,9 +33,11 @@ func New() (*Manager, error) {
 	updateStream := server.CreateStream("updates")
 	updateStream.AutoReplay = false
 
-	return &Manager{
+	m := &Manager{
 		SSE: server,
-	}, nil
+	}
+	go m.publishDiskStatusEvery(30 * time.Second)
+	return m, nil
 }
 
 // SaveConfig saves the current channels and state to a JSON file.
@@ -213,6 +216,28 @@ func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 			Event: []byte(info.Username + "-log"),
 			Data:  []byte(strings.Join(info.Logs, "\n")),
 		})
+	}
+}
+
+// PublishDiskStatus sends the latest disk usage status to the updates stream.
+func (m *Manager) PublishDiskStatus() {
+	var b bytes.Buffer
+	if err := view.DiskUsageTpl.ExecuteTemplate(&b, "disk_usage", m.DiskUsageInfo()); err != nil {
+		fmt.Println("Error executing disk usage template:", err)
+		return
+	}
+	m.SSE.Publish("updates", &sse.Event{
+		Event: []byte(entity.EventDiskStatus),
+		Data:  b.Bytes(),
+	})
+}
+
+func (m *Manager) publishDiskStatusEvery(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		m.PublishDiskStatus()
 	}
 }
 

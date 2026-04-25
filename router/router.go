@@ -16,7 +16,7 @@ func SetupRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.Default()
-	if err := LoadHTMLFromEmbedFS(r, view.FS, "templates/index.html", "templates/channel_info.html"); err != nil {
+	if err := LoadHTMLFromEmbedFS(r, view.FS, "templates/index.html", "templates/channel_info.html", "templates/disk_usage.html"); err != nil {
 		log.Fatalf("failed to load HTML templates: %v", err)
 	}
 

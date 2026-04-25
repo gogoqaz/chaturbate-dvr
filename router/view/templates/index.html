@@ -26,7 +26,7 @@
     </head>
 
     <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-dvh font-sans overflow-hidden" hx-ext="sse">
-        <div class="flex h-dvh">
+        <div class="flex h-dvh" sse-connect="/updates?stream=updates">
 
             <!-- Sidebar -->
             <aside id="sidebar" class="w-[260px] max-md:w-full bg-white dark:bg-zinc-800 border-r border-zinc-200 dark:border-zinc-700 max-md:border-r-0 flex flex-col shrink-0">
@@ -76,12 +76,17 @@
                 <!-- / Channel List -->
 
                 <!-- Sidebar Footer -->
-                <div class="px-4 py-3 border-t border-zinc-100 dark:border-zinc-700 flex items-center justify-between">
-                    <span class="text-[10px] text-zinc-400 uppercase">Version {{ .Config.Version }}</span>
-                    <button onclick="toggleDarkMode()" class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" title="Toggle dark mode">
-                        <svg class="w-4 h-4 block dark:hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-                        <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-                    </button>
+                <div class="px-4 py-3 border-t border-zinc-100 dark:border-zinc-700 space-y-3">
+                    <div sse-swap="disk-status">
+                        {{ template "disk_usage" .DiskUsage }}
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] text-zinc-400 uppercase">Version {{ .Config.Version }}</span>
+                        <button onclick="toggleDarkMode()" class="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" title="Toggle dark mode">
+                            <svg class="w-4 h-4 block dark:hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                            <svg class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                        </button>
+                    </div>
                 </div>
                 <!-- / Sidebar Footer -->
 
@@ -89,7 +94,7 @@
             <!-- / Sidebar -->
 
             <!-- Main Content -->
-            <main id="main-content" class="flex-1 flex flex-col overflow-hidden max-md:hidden max-md:w-full" {{ if .Channels }}sse-connect="/updates?stream=updates"{{ end }}>
+            <main id="main-content" class="flex-1 flex flex-col overflow-hidden max-md:hidden max-md:w-full">
 
                 {{ if not .Channels }}
                 <!-- Blankslate -->

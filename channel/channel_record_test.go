@@ -19,6 +19,8 @@ func (noopManager) StopChannel(string) error                        { return nil
 func (noopManager) PauseChannel(string) error                       { return nil }
 func (noopManager) ResumeChannel(string) error                      { return nil }
 func (noopManager) ChannelInfo() []*entity.ChannelInfo              { return nil }
+func (noopManager) DiskUsageInfo() *entity.DiskUsageInfo            { return nil }
+func (noopManager) PublishDiskStatus()                              {}
 func (noopManager) Publish(string, *entity.ChannelInfo)             {}
 func (noopManager) Subscriber(http.ResponseWriter, *http.Request)   {}
 func (noopManager) LoadConfig() error                               { return nil }
@@ -125,7 +127,7 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	t.Setenv("PATH", dir)
 
 	videoMP4 := buildFragmentedMP4(t, "video", 90000, []byte{0x00, 0x00, 0x00, 0x01, 0x67}) // fake NAL unit
-	audioMP4 := buildFragmentedMP4(t, "audio", 44100, []byte{0xFF, 0xF1})                    // fake AAC frame
+	audioMP4 := buildFragmentedMP4(t, "audio", 44100, []byte{0xFF, 0xF1})                   // fake AAC frame
 
 	base := filepath.Join(dir, "recording")
 	ch := New(&entity.ChannelConfig{
