@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/teacat/chaturbate-dvr/channel"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/internal"
 	"github.com/teacat/chaturbate-dvr/server"
@@ -32,17 +31,9 @@ func (m *Manager) DiskUsageInfo() *entity.DiskUsageInfo {
 func (m *Manager) activeRecordingDir() string {
 	if m != nil {
 		var activeDir string
-		m.Channels.Range(func(_, value any) bool {
-			ch, ok := value.(*channel.Channel)
-			if !ok {
-				return true
-			}
-			if ch.File != nil {
-				activeDir = filepath.Dir(ch.File.Name())
-				return false
-			}
-			if ch.AudioFile != nil {
-				activeDir = filepath.Dir(ch.AudioFile.Name())
+		m.recordingDirs.Range(func(_, value any) bool {
+			if dir, ok := value.(string); ok && dir != "" {
+				activeDir = dir
 				return false
 			}
 			return true

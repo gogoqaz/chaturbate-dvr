@@ -52,6 +52,7 @@ func (ch *Channel) Cleanup() error {
 	currentFilename := ch.CurrentFilename
 
 	defer func() {
+		ch.clearRecordingDir()
 		ch.File = nil
 		ch.AudioFile = nil
 		ch.CurrentFilename = ""
@@ -301,7 +302,28 @@ func (ch *Channel) CreateNewFile(filename string) error {
 		}
 	}
 
+	ch.setRecordingDir(filepath.Dir(videoPath))
 	return nil
+}
+
+func (ch *Channel) setRecordingDir(dir string) {
+	tracker, ok := server.Manager.(interface {
+		SetRecordingDir(username, dir string)
+	})
+	if !ok {
+		return
+	}
+	tracker.SetRecordingDir(ch.Config.Username, dir)
+}
+
+func (ch *Channel) clearRecordingDir() {
+	tracker, ok := server.Manager.(interface {
+		ClearRecordingDir(username string)
+	})
+	if !ok {
+		return
+	}
+	tracker.ClearRecordingDir(ch.Config.Username)
 }
 
 func (ch *Channel) videoPath(filename string) string {

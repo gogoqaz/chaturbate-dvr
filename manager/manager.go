@@ -22,6 +22,7 @@ import (
 type Manager struct {
 	Channels         sync.Map
 	SSE              *sse.Server
+	recordingDirs    sync.Map
 	diskStatusMu     sync.Mutex
 	diskStatusCtx    context.Context
 	diskStatusCancel context.CancelFunc
@@ -240,6 +241,22 @@ func (m *Manager) PublishDiskStatus() {
 		Event: []byte(entity.EventDiskStatus),
 		Data:  b.Bytes(),
 	})
+}
+
+// SetRecordingDir tracks the directory currently receiving recording writes.
+func (m *Manager) SetRecordingDir(username, dir string) {
+	if username == "" || dir == "" {
+		return
+	}
+	m.recordingDirs.Store(username, dir)
+}
+
+// ClearRecordingDir removes a channel's active recording directory.
+func (m *Manager) ClearRecordingDir(username string) {
+	if username == "" {
+		return
+	}
+	m.recordingDirs.Delete(username)
 }
 
 func (m *Manager) shouldPublishDiskStatus(now time.Time) bool {

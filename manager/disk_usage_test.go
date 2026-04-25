@@ -101,6 +101,23 @@ func TestResolveDefaultRecordingDirInvalidPatternFallsBackToVideos(t *testing.T)
 	}
 }
 
+func TestActiveRecordingDirUsesTrackedDirectory(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	m.SetRecordingDir("alice", filepath.Join("videos", "alice"))
+	if got := m.activeRecordingDir(); got != filepath.Join("videos", "alice") {
+		t.Fatalf("activeRecordingDir() = %q, want %q", got, filepath.Join("videos", "alice"))
+	}
+
+	m.ClearRecordingDir("alice")
+	if got := m.activeRecordingDir(); got == filepath.Join("videos", "alice") {
+		t.Fatalf("activeRecordingDir() = %q after clear, want fallback path", got)
+	}
+}
+
 func TestBuildDiskUsageInfoStatfsTotalBytesOverflow(t *testing.T) {
 	original := diskStatfs
 	diskStatfs = func(_ string, stat *syscall.Statfs_t) error {
