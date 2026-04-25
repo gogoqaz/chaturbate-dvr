@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/teacat/chaturbate-dvr/entity"
 )
 
 func TestChannelListItemsUseKeyboardAccessibleButtons(t *testing.T) {
@@ -41,7 +43,7 @@ func TestSidebarContainsDiskStatusSSESwap(t *testing.T) {
 	html := string(content)
 	for _, want := range []string{
 		`sse-connect="/updates?stream=updates"`,
-		`sse-swap="disk-status"`,
+		`sse-swap="` + entity.EventDiskStatus + `"`,
 		`{{ template "disk_usage" .DiskUsage }}`,
 	} {
 		if !strings.Contains(html, want) {
@@ -51,22 +53,32 @@ func TestSidebarContainsDiskStatusSSESwap(t *testing.T) {
 }
 
 func TestDiskUsageTemplateHasAccessibleMeterText(t *testing.T) {
-	content, err := FS.ReadFile("templates/disk_usage.html")
-	if err != nil {
-		t.Fatalf("read template: %v", err)
+	var b bytes.Buffer
+	usage := &entity.DiskUsageInfo{
+		Path:        "/recordings",
+		UsedPercent: 42,
+		Used:        "42 GB",
+		Free:        "58 GB",
+	}
+	if err := DiskUsageTpl.ExecuteTemplate(&b, "disk_usage", usage); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
 	}
 
-	html := string(content)
+	html := b.String()
 	for _, want := range []string{
 		`aria-label="Recording disk usage"`,
 		`role="meter"`,
 		`aria-valuemin="0"`,
 		`aria-valuemax="100"`,
+		`aria-valuenow="42"`,
 		`Recording Disk`,
-		`Disk status unavailable`,
+		`Healthy`,
+		`42 GB used`,
+		`58 GB free`,
+		`/recordings`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Fatalf("disk usage template missing %q", want)
+			t.Fatalf("rendered disk usage template missing %q", want)
 		}
 	}
 }
