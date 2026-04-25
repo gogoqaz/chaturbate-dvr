@@ -25,7 +25,11 @@ type Manager struct {
 	diskStatusMu     sync.Mutex
 	diskStatusCtx    context.Context
 	diskStatusCancel context.CancelFunc
+	diskPublishMu    sync.Mutex
+	lastDiskPublish  time.Time
 }
+
+const diskStatusPublishMinInterval = 5 * time.Second
 
 // New initializes a new Manager instance with an SSE server.
 func New() (*Manager, error) {
@@ -223,6 +227,10 @@ func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 
 // PublishDiskStatus sends the latest disk usage status to the updates stream.
 func (m *Manager) PublishDiskStatus() {
+	if !m.shouldPublishDiskStatus(time.Now()) {
+		return
+	}
+
 	var b bytes.Buffer
 	if err := view.DiskUsageTpl.ExecuteTemplate(&b, "disk_usage", m.DiskUsageInfo()); err != nil {
 		fmt.Println("Error executing disk usage template:", err)
@@ -232,6 +240,17 @@ func (m *Manager) PublishDiskStatus() {
 		Event: []byte(entity.EventDiskStatus),
 		Data:  b.Bytes(),
 	})
+}
+
+func (m *Manager) shouldPublishDiskStatus(now time.Time) bool {
+	m.diskPublishMu.Lock()
+	defer m.diskPublishMu.Unlock()
+
+	if m.lastDiskPublish.IsZero() || now.Sub(m.lastDiskPublish) >= diskStatusPublishMinInterval {
+		m.lastDiskPublish = now
+		return true
+	}
+	return false
 }
 
 func (m *Manager) StartDiskStatusPublisher(interval time.Duration) {

@@ -223,3 +223,48 @@ func TestDiskStatusPublisherLifecycleIsIdempotent(t *testing.T) {
 		t.Fatal("disk status publisher cancel is not nil after second stop")
 	}
 }
+
+func TestShouldPublishDiskStatusThrottlesRepeatedCalls(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	now := time.Date(2026, time.April, 25, 12, 0, 0, 0, time.UTC)
+	if !m.shouldPublishDiskStatus(now) {
+		t.Fatal("first shouldPublishDiskStatus() = false, want true")
+	}
+	if m.shouldPublishDiskStatus(now.Add(time.Second)) {
+		t.Fatal("second shouldPublishDiskStatus() inside throttle window = true, want false")
+	}
+	if !m.shouldPublishDiskStatus(now.Add(5 * time.Second)) {
+		t.Fatal("shouldPublishDiskStatus() at throttle boundary = false, want true")
+	}
+}
+
+func TestPublishDiskStatusSkipsStatfsWithinThrottleWindow(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	original := diskStatfs
+	statfsCalls := 0
+	diskStatfs = func(_ string, stat *syscall.Statfs_t) error {
+		statfsCalls++
+		stat.Bsize = 4096
+		stat.Blocks = 100
+		stat.Bavail = 50
+		return nil
+	}
+	t.Cleanup(func() {
+		diskStatfs = original
+	})
+
+	m.PublishDiskStatus()
+	m.PublishDiskStatus()
+
+	if statfsCalls != 1 {
+		t.Fatalf("diskStatfs calls = %d, want 1", statfsCalls)
+	}
+}
