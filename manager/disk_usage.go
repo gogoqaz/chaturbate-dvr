@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -104,9 +105,16 @@ func buildDiskUsageInfo(path string) *entity.DiskUsageInfo {
 		return info
 	}
 
-	blockSize := uint64(stat.Bsize)
-	totalBytes := stat.Blocks * blockSize
-	freeBytes := stat.Bavail * blockSize
+	totalBytes, ok := multiplyStatfsBytes(stat.Blocks, uint64(stat.Bsize))
+	if !ok {
+		info.Error = fmt.Sprintf("statfs %s: total bytes overflow", statPath)
+		return info
+	}
+	freeBytes, ok := multiplyStatfsBytes(stat.Bavail, uint64(stat.Bsize))
+	if !ok {
+		info.Error = fmt.Sprintf("statfs %s: free bytes overflow", statPath)
+		return info
+	}
 	usedBytes := uint64(0)
 	if totalBytes > freeBytes {
 		usedBytes = totalBytes - freeBytes
@@ -128,6 +136,17 @@ func buildDiskUsageInfo(path string) *entity.DiskUsageInfo {
 	info.IsWarning = isWarning
 	info.WarningReason = warningReason
 	return info
+}
+
+func multiplyStatfsBytes(blocks uint64, blockSize uint64) (uint64, bool) {
+	if blockSize == 0 {
+		return 0, false
+	}
+	hi, lo := bits.Mul64(blocks, blockSize)
+	if hi != 0 {
+		return 0, false
+	}
+	return lo, true
 }
 
 func nearestExistingDir(path string) string {
@@ -157,7 +176,13 @@ func diskUsageWarning(freeBytes, totalBytes uint64) (bool, string) {
 	if freeBytes <= diskWarningFreeBytes {
 		return true, "20 GB free or less"
 	}
-	if totalBytes > 0 && freeBytes*100 <= totalBytes*diskWarningFreePercent {
+	if totalBytes == 0 {
+		return false, ""
+	}
+
+	leftHi, leftLo := bits.Mul64(freeBytes, 100)
+	rightHi, rightLo := bits.Mul64(totalBytes, uint64(diskWarningFreePercent))
+	if leftHi < rightHi || (leftHi == rightHi && leftLo <= rightLo) {
 		return true, "10% free or less"
 	}
 	return false, ""
