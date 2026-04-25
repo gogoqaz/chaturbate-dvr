@@ -7,7 +7,6 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/internal"
@@ -21,7 +20,12 @@ const (
 	defaultRecordingPattern = "videos/{{.Username}}_{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}{{if .Sequence}}_{{.Sequence}}{{end}}"
 )
 
-var diskStatfs = syscall.Statfs
+type diskUsageStats struct {
+	totalBytes uint64
+	freeBytes  uint64
+}
+
+var diskUsageStatsFn = readDiskUsageStats
 
 // DiskUsageInfo returns disk usage details for the current recording target.
 func (m *Manager) DiskUsageInfo() *entity.DiskUsageInfo {
@@ -90,22 +94,13 @@ func buildDiskUsageInfo(path string) *entity.DiskUsageInfo {
 	info := &entity.DiskUsageInfo{Path: path}
 
 	statPath := nearestExistingDir(path)
-	var stat syscall.Statfs_t
-	if err := diskStatfs(statPath, &stat); err != nil {
-		info.Error = fmt.Sprintf("statfs %s: %s", statPath, err.Error())
+	stats, err := diskUsageStatsFn(statPath)
+	if err != nil {
+		info.Error = fmt.Sprintf("disk usage %s: %s", statPath, err.Error())
 		return info
 	}
-
-	totalBytes, ok := multiplyStatfsBytes(stat.Blocks, uint64(stat.Bsize))
-	if !ok {
-		info.Error = fmt.Sprintf("statfs %s: total bytes overflow", statPath)
-		return info
-	}
-	freeBytes, ok := multiplyStatfsBytes(stat.Bavail, uint64(stat.Bsize))
-	if !ok {
-		info.Error = fmt.Sprintf("statfs %s: free bytes overflow", statPath)
-		return info
-	}
+	totalBytes := stats.totalBytes
+	freeBytes := stats.freeBytes
 	usedBytes := uint64(0)
 	if totalBytes > freeBytes {
 		usedBytes = totalBytes - freeBytes
@@ -127,17 +122,6 @@ func buildDiskUsageInfo(path string) *entity.DiskUsageInfo {
 	info.IsWarning = isWarning
 	info.WarningReason = warningReason
 	return info
-}
-
-func multiplyStatfsBytes(blocks uint64, blockSize uint64) (uint64, bool) {
-	if blockSize == 0 {
-		return 0, false
-	}
-	hi, lo := bits.Mul64(blocks, blockSize)
-	if hi != 0 {
-		return 0, false
-	}
-	return lo, true
 }
 
 func nearestExistingDir(path string) string {

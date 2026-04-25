@@ -1,9 +1,9 @@
 package manager
 
 import (
+	"errors"
 	"math"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -118,66 +118,18 @@ func TestActiveRecordingDirUsesTrackedDirectory(t *testing.T) {
 	}
 }
 
-func TestBuildDiskUsageInfoStatfsTotalBytesOverflow(t *testing.T) {
-	original := diskStatfs
-	diskStatfs = func(_ string, stat *syscall.Statfs_t) error {
-		stat.Bsize = 4096
-		stat.Blocks = math.MaxUint64/uint64(stat.Bsize) + 1
-		stat.Bavail = 1
-		return nil
+func TestBuildDiskUsageInfoDiskStatsFailure(t *testing.T) {
+	original := diskUsageStatsFn
+	diskUsageStatsFn = func(string) (diskUsageStats, error) {
+		return diskUsageStats{}, errors.New("stat failed")
 	}
 	t.Cleanup(func() {
-		diskStatfs = original
-	})
-
-	info := buildDiskUsageInfo("overflow/path")
-	if info.Error == "" {
-		t.Fatal("Error is empty, want overflow text")
-	}
-	if info.Path != "overflow/path" {
-		t.Fatalf("Path = %q, want %q", info.Path, "overflow/path")
-	}
-	if info.IsWarning {
-		t.Fatal("IsWarning = true for overflow disk info, want false")
-	}
-}
-
-func TestBuildDiskUsageInfoStatfsFreeBytesOverflow(t *testing.T) {
-	original := diskStatfs
-	diskStatfs = func(_ string, stat *syscall.Statfs_t) error {
-		stat.Bsize = 4096
-		stat.Blocks = 1
-		stat.Bavail = math.MaxUint64/uint64(stat.Bsize) + 1
-		return nil
-	}
-	t.Cleanup(func() {
-		diskStatfs = original
-	})
-
-	info := buildDiskUsageInfo("overflow/path")
-	if info.Error == "" {
-		t.Fatal("Error is empty, want overflow text")
-	}
-	if info.Path != "overflow/path" {
-		t.Fatalf("Path = %q, want %q", info.Path, "overflow/path")
-	}
-	if info.IsWarning {
-		t.Fatal("IsWarning = true for overflow disk info, want false")
-	}
-}
-
-func TestBuildDiskUsageInfoStatfsFailure(t *testing.T) {
-	original := diskStatfs
-	diskStatfs = func(string, *syscall.Statfs_t) error {
-		return syscall.ENOENT
-	}
-	t.Cleanup(func() {
-		diskStatfs = original
+		diskUsageStatsFn = original
 	})
 
 	info := buildDiskUsageInfo("missing/path")
 	if info.Error == "" {
-		t.Fatal("Error is empty, want Statfs failure text")
+		t.Fatal("Error is empty, want disk stats failure text")
 	}
 	if info.Path != "missing/path" {
 		t.Fatalf("Path = %q, want %q", info.Path, "missing/path")
@@ -265,23 +217,23 @@ func TestPublishDiskStatusSkipsStatfsWithinThrottleWindow(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	original := diskStatfs
-	statfsCalls := 0
-	diskStatfs = func(_ string, stat *syscall.Statfs_t) error {
-		statfsCalls++
-		stat.Bsize = 4096
-		stat.Blocks = 100
-		stat.Bavail = 50
-		return nil
+	original := diskUsageStatsFn
+	statsCalls := 0
+	diskUsageStatsFn = func(string) (diskUsageStats, error) {
+		statsCalls++
+		return diskUsageStats{
+			totalBytes: 409600,
+			freeBytes:  204800,
+		}, nil
 	}
 	t.Cleanup(func() {
-		diskStatfs = original
+		diskUsageStatsFn = original
 	})
 
 	m.PublishDiskStatus()
 	m.PublishDiskStatus()
 
-	if statfsCalls != 1 {
-		t.Fatalf("diskStatfs calls = %d, want 1", statfsCalls)
+	if statsCalls != 1 {
+		t.Fatalf("disk usage stats calls = %d, want 1", statsCalls)
 	}
 }
