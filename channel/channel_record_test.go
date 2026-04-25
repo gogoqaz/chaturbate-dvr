@@ -26,6 +26,22 @@ func (noopManager) Subscriber(http.ResponseWriter, *http.Request)   {}
 func (noopManager) LoadConfig() error                               { return nil }
 func (noopManager) SaveConfig() error                               { return nil }
 
+type recordingDirManager struct {
+	noopManager
+	dirs map[string]string
+}
+
+func (m *recordingDirManager) SetRecordingDir(username, dir string) {
+	if m.dirs == nil {
+		m.dirs = make(map[string]string)
+	}
+	m.dirs[username] = dir
+}
+
+func (m *recordingDirManager) ClearRecordingDir(username string) {
+	delete(m.dirs, username)
+}
+
 func init() {
 	server.Manager = noopManager{}
 }
@@ -85,6 +101,25 @@ func TestCreateNewFileWritesInitSegmentForRotatedFMP4Files(t *testing.T) {
 	}
 	if string(got) != string(initSegment) {
 		t.Fatalf("mp4 contents = %q, want %q", string(got), string(initSegment))
+	}
+}
+
+func TestCleanupClearsRecordingDirWhenFilesAlreadyNil(t *testing.T) {
+	originalManager := server.Manager
+	mgr := &recordingDirManager{}
+	server.Manager = mgr
+	t.Cleanup(func() {
+		server.Manager = originalManager
+	})
+
+	ch := New(&entity.ChannelConfig{Username: "alice"})
+	mgr.SetRecordingDir("alice", "videos/alice")
+
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+	if _, ok := mgr.dirs["alice"]; ok {
+		t.Fatal("Cleanup() left stale recording dir after file pointers were already nil")
 	}
 }
 
