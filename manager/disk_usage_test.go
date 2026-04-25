@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestDiskUsageWarningThresholdPercent(t *testing.T) {
@@ -166,5 +167,59 @@ func TestBuildDiskUsageInfoStatfsFailure(t *testing.T) {
 	}
 	if info.IsWarning {
 		t.Fatal("IsWarning = true for unavailable disk info, want false")
+	}
+}
+
+func TestNewDoesNotStartDiskStatusPublisher(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if m.diskStatusCancel != nil {
+		t.Fatal("disk status publisher started from New(), want explicit web setup start")
+	}
+}
+
+func TestDiskStatusPublisherLifecycleIsIdempotent(t *testing.T) {
+	m, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	m.StartDiskStatusPublisher(time.Hour)
+	firstCtx := m.diskStatusCtx
+	if firstCtx == nil {
+		t.Fatal("disk status publisher context is nil after start")
+	}
+	if m.diskStatusCancel == nil {
+		t.Fatal("disk status publisher cancel is nil after start")
+	}
+
+	m.StartDiskStatusPublisher(time.Hour)
+	if m.diskStatusCtx == nil {
+		t.Fatal("disk status publisher context is nil after second start")
+	}
+	if m.diskStatusCancel == nil {
+		t.Fatal("disk status publisher cancel is nil after second start")
+	}
+	if m.diskStatusCtx != firstCtx {
+		t.Fatal("StartDiskStatusPublisher replaced the running publisher, want idempotent start")
+	}
+
+	m.StopDiskStatusPublisher()
+	if m.diskStatusCtx != nil {
+		t.Fatal("disk status publisher context is not nil after stop")
+	}
+	if m.diskStatusCancel != nil {
+		t.Fatal("disk status publisher cancel is not nil after stop")
+	}
+
+	m.StopDiskStatusPublisher()
+	if m.diskStatusCtx != nil {
+		t.Fatal("disk status publisher context is not nil after second stop")
+	}
+	if m.diskStatusCancel != nil {
+		t.Fatal("disk status publisher cancel is not nil after second stop")
 	}
 }

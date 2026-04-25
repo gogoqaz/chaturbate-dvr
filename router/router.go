@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/teacat/chaturbate-dvr/router/view"
@@ -18,6 +19,12 @@ func SetupRouter() *gin.Engine {
 	r := gin.Default()
 	if err := LoadHTMLFromEmbedFS(r, view.FS, "templates/index.html", "templates/channel_info.html", "templates/disk_usage.html"); err != nil {
 		log.Fatalf("failed to load HTML templates: %v", err)
+	}
+
+	if publisher, ok := server.Manager.(interface {
+		StartDiskStatusPublisher(time.Duration)
+	}); ok {
+		publisher.StartDiskStatusPublisher(30 * time.Second)
 	}
 
 	// Apply authentication if configured

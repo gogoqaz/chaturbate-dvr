@@ -20,8 +20,11 @@ import (
 
 // Manager is responsible for managing channels and their states.
 type Manager struct {
-	Channels sync.Map
-	SSE      *sse.Server
+	Channels         sync.Map
+	SSE              *sse.Server
+	diskStatusMu     sync.Mutex
+	diskStatusCtx    context.Context
+	diskStatusCancel context.CancelFunc
 }
 
 // New initializes a new Manager instance with an SSE server.
@@ -36,7 +39,6 @@ func New() (*Manager, error) {
 	m := &Manager{
 		SSE: server,
 	}
-	go m.publishDiskStatusEvery(30 * time.Second)
 	return m, nil
 }
 
@@ -232,12 +234,43 @@ func (m *Manager) PublishDiskStatus() {
 	})
 }
 
-func (m *Manager) publishDiskStatusEvery(interval time.Duration) {
+func (m *Manager) StartDiskStatusPublisher(interval time.Duration) {
+	m.diskStatusMu.Lock()
+	defer m.diskStatusMu.Unlock()
+
+	if m.diskStatusCancel != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.diskStatusCtx = ctx
+	m.diskStatusCancel = cancel
+	go m.publishDiskStatusEvery(ctx, interval)
+}
+
+func (m *Manager) StopDiskStatusPublisher() {
+	m.diskStatusMu.Lock()
+	cancel := m.diskStatusCancel
+	m.diskStatusCtx = nil
+	m.diskStatusCancel = nil
+	m.diskStatusMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (m *Manager) publishDiskStatusEvery(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		m.PublishDiskStatus()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.PublishDiskStatus()
+		}
 	}
 }
 
