@@ -235,6 +235,7 @@ func (ch *Channel) HandleSegment(b []byte, duration float64) error {
 
 	// Send an SSE update to update the view
 	ch.Update()
+	server.Manager.PublishDiskStatus()
 
 	if !ch.ShouldSwitchFile() {
 		return nil

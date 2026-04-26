@@ -19,10 +19,28 @@ func (noopManager) StopChannel(string) error                        { return nil
 func (noopManager) PauseChannel(string) error                       { return nil }
 func (noopManager) ResumeChannel(string) error                      { return nil }
 func (noopManager) ChannelInfo() []*entity.ChannelInfo              { return nil }
+func (noopManager) DiskUsageInfo() *entity.DiskUsageInfo            { return nil }
+func (noopManager) PublishDiskStatus()                              {}
 func (noopManager) Publish(string, *entity.ChannelInfo)             {}
 func (noopManager) Subscriber(http.ResponseWriter, *http.Request)   {}
 func (noopManager) LoadConfig() error                               { return nil }
 func (noopManager) SaveConfig() error                               { return nil }
+
+type recordingDirManager struct {
+	noopManager
+	dirs map[string]string
+}
+
+func (m *recordingDirManager) SetRecordingDir(username, dir string) {
+	if m.dirs == nil {
+		m.dirs = make(map[string]string)
+	}
+	m.dirs[username] = dir
+}
+
+func (m *recordingDirManager) ClearRecordingDir(username string) {
+	delete(m.dirs, username)
+}
 
 func init() {
 	server.Manager = noopManager{}
@@ -86,6 +104,25 @@ func TestCreateNewFileWritesInitSegmentForRotatedFMP4Files(t *testing.T) {
 	}
 }
 
+func TestCleanupClearsRecordingDirWhenFilesAlreadyNil(t *testing.T) {
+	originalManager := server.Manager
+	mgr := &recordingDirManager{}
+	server.Manager = mgr
+	t.Cleanup(func() {
+		server.Manager = originalManager
+	})
+
+	ch := New(&entity.ChannelConfig{Username: "alice"})
+	mgr.SetRecordingDir("alice", "videos/alice")
+
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+	if _, ok := mgr.dirs["alice"]; ok {
+		t.Fatal("Cleanup() left stale recording dir after file pointers were already nil")
+	}
+}
+
 // buildFragmentedMP4 creates a minimal valid fragmented MP4 in memory with one track and one sample.
 func buildFragmentedMP4(t *testing.T, mediaType string, timescale uint32, sampleData []byte) []byte {
 	t.Helper()
@@ -125,7 +162,7 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	t.Setenv("PATH", dir)
 
 	videoMP4 := buildFragmentedMP4(t, "video", 90000, []byte{0x00, 0x00, 0x00, 0x01, 0x67}) // fake NAL unit
-	audioMP4 := buildFragmentedMP4(t, "audio", 44100, []byte{0xFF, 0xF1})                    // fake AAC frame
+	audioMP4 := buildFragmentedMP4(t, "audio", 44100, []byte{0xFF, 0xF1})                   // fake AAC frame
 
 	base := filepath.Join(dir, "recording")
 	ch := New(&entity.ChannelConfig{

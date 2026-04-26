@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/r3labs/sse/v2"
 	"github.com/teacat/chaturbate-dvr/channel"
@@ -19,9 +20,17 @@ import (
 
 // Manager is responsible for managing channels and their states.
 type Manager struct {
-	Channels sync.Map
-	SSE      *sse.Server
+	Channels         sync.Map
+	SSE              *sse.Server
+	recordingDirs    sync.Map
+	diskStatusMu     sync.Mutex
+	diskStatusCtx    context.Context
+	diskStatusCancel context.CancelFunc
+	diskPublishMu    sync.Mutex
+	lastDiskPublish  time.Time
 }
+
+const diskStatusPublishMinInterval = 5 * time.Second
 
 // New initializes a new Manager instance with an SSE server.
 func New() (*Manager, error) {
@@ -32,9 +41,10 @@ func New() (*Manager, error) {
 	updateStream := server.CreateStream("updates")
 	updateStream.AutoReplay = false
 
-	return &Manager{
+	m := &Manager{
 		SSE: server,
-	}, nil
+	}
+	return m, nil
 }
 
 // SaveConfig saves the current channels and state to a JSON file.
@@ -213,6 +223,90 @@ func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 			Event: []byte(info.Username + "-log"),
 			Data:  []byte(strings.Join(info.Logs, "\n")),
 		})
+	}
+}
+
+// PublishDiskStatus sends the latest disk usage status to the updates stream.
+func (m *Manager) PublishDiskStatus() {
+	if !m.shouldPublishDiskStatus(time.Now()) {
+		return
+	}
+
+	var b bytes.Buffer
+	if err := view.DiskUsageTpl.ExecuteTemplate(&b, "disk_usage", m.DiskUsageInfo()); err != nil {
+		fmt.Println("Error executing disk usage template:", err)
+		return
+	}
+	m.SSE.Publish("updates", &sse.Event{
+		Event: []byte(entity.EventDiskStatus),
+		Data:  b.Bytes(),
+	})
+}
+
+// SetRecordingDir tracks the directory currently receiving recording writes.
+func (m *Manager) SetRecordingDir(username, dir string) {
+	if username == "" || dir == "" {
+		return
+	}
+	m.recordingDirs.Store(username, dir)
+}
+
+// ClearRecordingDir removes a channel's active recording directory.
+func (m *Manager) ClearRecordingDir(username string) {
+	if username == "" {
+		return
+	}
+	m.recordingDirs.Delete(username)
+}
+
+func (m *Manager) shouldPublishDiskStatus(now time.Time) bool {
+	m.diskPublishMu.Lock()
+	defer m.diskPublishMu.Unlock()
+
+	if m.lastDiskPublish.IsZero() || now.Sub(m.lastDiskPublish) >= diskStatusPublishMinInterval {
+		m.lastDiskPublish = now
+		return true
+	}
+	return false
+}
+
+func (m *Manager) StartDiskStatusPublisher(interval time.Duration) {
+	m.diskStatusMu.Lock()
+	defer m.diskStatusMu.Unlock()
+
+	if m.diskStatusCancel != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.diskStatusCtx = ctx
+	m.diskStatusCancel = cancel
+	go m.publishDiskStatusEvery(ctx, interval)
+}
+
+func (m *Manager) StopDiskStatusPublisher() {
+	m.diskStatusMu.Lock()
+	cancel := m.diskStatusCancel
+	m.diskStatusCtx = nil
+	m.diskStatusCancel = nil
+	m.diskStatusMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (m *Manager) publishDiskStatusEvery(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.PublishDiskStatus()
+		}
 	}
 }
 

@@ -14,6 +14,8 @@ type IManager interface {
 	PauseChannel(username string) error
 	ResumeChannel(username string) error
 	ChannelInfo() []*entity.ChannelInfo
+	DiskUsageInfo() *entity.DiskUsageInfo
+	PublishDiskStatus()
 	Publish(name string, ch *entity.ChannelInfo)
 	Subscriber(w http.ResponseWriter, r *http.Request)
 	LoadConfig() error

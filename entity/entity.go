@@ -9,8 +9,9 @@ import (
 type Event = string
 
 const (
-	EventUpdate Event = "update"
-	EventLog    Event = "log"
+	EventUpdate     Event = "update"
+	EventLog        Event = "log"
+	EventDiskStatus Event = "disk-status"
 )
 
 // ChannelConfig represents the configuration for a channel.
@@ -47,6 +48,24 @@ type ChannelInfo struct {
 	CreatedAt    int64
 	Logs         []string
 	GlobalConfig *Config // for nested template to access $.Config
+}
+
+// DiskUsageInfo represents recording disk usage for the Web UI.
+type DiskUsageInfo struct {
+	Path            string
+	TotalBytes      uint64
+	UsedBytes       uint64
+	FreeBytes       uint64
+	UsedPercent     int
+	Total           string
+	Used            string
+	Free            string
+	FolderSizeBytes uint64
+	FolderSize      string
+	FolderSizeError string
+	IsWarning       bool
+	WarningReason   string
+	Error           string
 }
 
 // Config holds the configuration for the application.

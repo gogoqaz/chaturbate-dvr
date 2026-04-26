@@ -15,12 +15,20 @@ var FS embed.FS
 // InfoTpl is a template for rendering channel information.
 var InfoTpl *template.Template
 
+// DiskUsageTpl is a template for rendering disk usage information.
+var DiskUsageTpl *template.Template
+
 func init() {
 	var err error
 
 	InfoTpl, err = template.New("update").ParseFS(FS, "templates/channel_info.html")
 	if err != nil {
-		log.Fatalf("failed to parse template: %v", err)
+		log.Fatalf("failed to parse channel info template: %v", err)
+	}
+
+	DiskUsageTpl, err = template.New("disk_usage").ParseFS(FS, "templates/disk_usage.html")
+	if err != nil {
+		log.Fatalf("failed to parse disk usage template: %v", err)
 	}
 }
 

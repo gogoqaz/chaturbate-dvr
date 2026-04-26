@@ -13,15 +13,17 @@ import (
 
 // IndexData represents the data structure for the index page.
 type IndexData struct {
-	Config   *entity.Config
-	Channels []*entity.ChannelInfo
+	Config    *entity.Config
+	Channels  []*entity.ChannelInfo
+	DiskUsage *entity.DiskUsageInfo
 }
 
 // Index renders the index page with channel information.
 func Index(c *gin.Context) {
 	c.HTML(200, "index.html", &IndexData{
-		Config:   server.Config,
-		Channels: server.Manager.ChannelInfo(),
+		Config:    server.Config,
+		Channels:  server.Manager.ChannelInfo(),
+		DiskUsage: server.Manager.DiskUsageInfo(),
 	})
 }
 

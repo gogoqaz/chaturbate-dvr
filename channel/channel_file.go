@@ -46,6 +46,8 @@ func (ch *Channel) NextFile() error {
 
 // Cleanup cleans the file and resets it, called when the stream errors out or before next file was created.
 func (ch *Channel) Cleanup() error {
+	defer ch.clearRecordingDir()
+
 	if ch.File == nil && ch.AudioFile == nil {
 		return nil
 	}
@@ -301,7 +303,28 @@ func (ch *Channel) CreateNewFile(filename string) error {
 		}
 	}
 
+	ch.setRecordingDir(filepath.Dir(videoPath))
 	return nil
+}
+
+func (ch *Channel) setRecordingDir(dir string) {
+	tracker, ok := server.Manager.(interface {
+		SetRecordingDir(username, dir string)
+	})
+	if !ok {
+		return
+	}
+	tracker.SetRecordingDir(ch.Config.Username, dir)
+}
+
+func (ch *Channel) clearRecordingDir() {
+	tracker, ok := server.Manager.(interface {
+		ClearRecordingDir(username string)
+	})
+	if !ok {
+		return
+	}
+	tracker.ClearRecordingDir(ch.Config.Username)
 }
 
 func (ch *Channel) videoPath(filename string) string {
