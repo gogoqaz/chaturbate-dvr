@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -23,6 +24,14 @@ const (
 var (
 	detectedEncoder     string
 	detectedEncoderOnce sync.Once
+)
+
+// Frame-timing flag detection cache. ffmpeg 5+ uses -fps_mode (per-stream);
+// 4.x only knows the legacy global -vsync. Probing once at runtime keeps
+// CompressFile working on either generation without a static dependency.
+var (
+	fpsPassthroughFlag []string
+	fpsPassthroughOnce sync.Once
 )
 
 // videoEncoder represents a video encoder configuration
@@ -57,6 +66,88 @@ func detectEncoder() (videoEncoder, string) {
 	}
 	// Should not reach here since libx264 is always available if ffmpeg is installed
 	return availableEncoders[len(availableEncoders)-1], "CPU"
+}
+
+// getFpsPassthroughFlag returns the ffmpeg flag(s) that pass each video
+// frame's timestamp straight through to the muxer. Modern ffmpeg uses
+// -fps_mode passthrough; older 4.x exits with "Unrecognized option
+// 'fps_mode'", so we probe support once and fall back to -vsync passthrough
+// (deprecated on 5+, but still functional through ffmpeg 8).
+func getFpsPassthroughFlag() []string {
+	fpsPassthroughOnce.Do(func() {
+		cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error",
+			"-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.05",
+			"-fps_mode", "passthrough", "-f", "null", "-")
+		if err := cmd.Run(); err == nil {
+			fpsPassthroughFlag = []string{"-fps_mode", "passthrough"}
+		} else {
+			fpsPassthroughFlag = []string{"-vsync", "passthrough"}
+		}
+	})
+	return fpsPassthroughFlag
+}
+
+// detectStreamStartOffsetSec returns the seconds that should be skipped from
+// the input so the muxed video and audio first samples line up at output time
+// zero. LL-HLS video and audio playlists are independent, so the first
+// fetched fragment from each rarely covers the same wall-clock moment; the
+// later stream's first sample sits at output PTS=delta with the earlier
+// stream filling delta seconds of leading silence/black, which the user
+// reads as "A/V is off". Probing the muxed input lets the compress step skip
+// that leading mismatch while re-encoding (where -ss is sample-accurate).
+//
+// Returns 0 when probing fails, ffprobe is unavailable, or the offset is
+// below alignTrimThreshold (no point trimming sub-frame jitter).
+func detectStreamStartOffsetSec(srcPath string) float64 {
+	probe := func(stream string) (float64, bool) {
+		cmd := exec.Command("ffprobe", "-v", "error",
+			"-select_streams", stream,
+			"-show_entries", "stream=start_time",
+			"-of", "csv=p=0", srcPath)
+		out, err := cmd.Output()
+		if err != nil {
+			return 0, false
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+	videoStart, vOK := probe("v:0")
+	audioStart, aOK := probe("a:0")
+	if !vOK || !aOK {
+		return 0
+	}
+	skip := videoStart
+	if audioStart > skip {
+		skip = audioStart
+	}
+	if skip < alignTrimThreshold {
+		return 0
+	}
+	return skip
+}
+
+// alignTrimThreshold is the minimum mismatch (seconds) before we bother
+// trimming. Anything below this is sub-frame jitter that ffmpeg's existing
+// -avoid_negative_ts already handles cleanly.
+const alignTrimThreshold = 0.05
+
+// buildCompressArgs assembles the ffmpeg command line for compress, isolated
+// for testability. skipSec, when above the threshold, becomes an input-side
+// -ss so the leading misaligned segment is dropped accurately by the
+// re-encoder.
+func buildCompressArgs(srcPath, mkvPath string, encoder videoEncoder, fpsFlag []string, skipSec float64) []string {
+	args := []string{"-y", "-copyts", "-start_at_zero"}
+	if skipSec >= alignTrimThreshold {
+		args = append(args, "-ss", strconv.FormatFloat(skipSec, 'f', 3, 64))
+	}
+	args = append(args, "-i", srcPath, "-c:v", encoder.codec)
+	args = append(args, encoder.args...)
+	args = append(args, fpsFlag...)
+	args = append(args, "-c:a", "aac", "-b:a", "128k", "-avoid_negative_ts", "make_zero", mkvPath)
+	return args
 }
 
 // getEncoder returns the cached encoder or detects one
@@ -96,12 +187,21 @@ func (ch *Channel) CompressFile(srcPath string) {
 		// Get the best available encoder
 		encoder := getEncoder()
 
+		// Detect any leading misalignment between the muxed video/audio so
+		// the re-encoder can drop the leading silent gap. Probing happens
+		// before the size log so the message reflects whatever portion will
+		// actually end up in the output.
+		skipSec := detectStreamStartOffsetSec(srcPath)
+		if skipSec >= alignTrimThreshold {
+			ch.Info("compress: trimming %.3fs of leading misalignment from %s", skipSec, srcFilename)
+		}
+
 		ch.Info("compress: encoding %s (%s) using %s", srcFilename, internal.FormatFilesize(int(srcSize)), encoder.name)
 
-		// Build ffmpeg command
-		args := []string{"-y", "-i", srcPath, "-c:v", encoder.codec}
-		args = append(args, encoder.args...)
-		args = append(args, "-c:a", "aac", "-b:a", "128k", mkvPath)
+		// Preserve the recorded timeline while re-encoding. LL-HLS/fMP4
+		// inputs often carry variable frame timing; letting ffmpeg
+		// normalize frame cadence can make audio drift during compression.
+		args := buildCompressArgs(srcPath, mkvPath, encoder, getFpsPassthroughFlag(), skipSec)
 
 		cmd := exec.Command("ffmpeg", args...)
 		output, err := cmd.CombinedOutput()
@@ -239,13 +339,30 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 		return err
 	}
 
+	// Compute total media-timescale duration from the source fragments
+	// while track IDs still match the original trex values, so the duration
+	// hints written into mvhd/tkhd/mdhd reflect the real recorded length.
+	// Without this, mvhd.Duration stays 0 (the value from a live init
+	// segment), and players that read it as a hint instead of scanning every
+	// fragment report the recording as much shorter than it is.
+	videoMediaDur := sumFragmentDurations(videoFragments, videoTrex)
+	audioMediaDur := sumFragmentDurations(audioFragments, audioTrex)
+
 	ftyp := videoFile.Init.Ftyp
 	moov := videoFile.Init.Moov
 	if len(moov.Traks) != 1 || moov.Mvex == nil || len(moov.Mvex.Trexs) != 1 {
 		return fmt.Errorf("expected single-track video init")
 	}
 
-	moov.Traks[0].Tkhd.TrackID = videoTrackID
+	videoTrak := moov.Traks[0]
+	if videoTrak.Mdia == nil || videoTrak.Mdia.Mdhd == nil {
+		return fmt.Errorf("video track missing mdhd")
+	}
+	if audioTrack.Mdia == nil || audioTrack.Mdia.Mdhd == nil {
+		return fmt.Errorf("audio track missing mdhd")
+	}
+
+	videoTrak.Tkhd.TrackID = videoTrackID
 	moov.Mvex.Trexs[0].TrackID = videoTrackID
 
 	audioTrack.Tkhd.TrackID = audioTrackID
@@ -255,6 +372,26 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 	moov.Mvex.AddChild(audioTrex)
 	moov.Mvhd.NextTrackID = audioTrackID + 1
 
+	movieTimescale := uint64(moov.Mvhd.Timescale)
+	if movieTimescale == 0 {
+		movieTimescale = 1
+	}
+	videoMdhdTimescale := uint64(videoTrak.Mdia.Mdhd.Timescale)
+	audioMdhdTimescale := uint64(audioTrack.Mdia.Mdhd.Timescale)
+
+	videoTrak.Mdia.Mdhd.Duration = videoMediaDur
+	audioTrack.Mdia.Mdhd.Duration = audioMediaDur
+
+	videoMovieDur := scaleDuration(videoMediaDur, movieTimescale, videoMdhdTimescale)
+	audioMovieDur := scaleDuration(audioMediaDur, movieTimescale, audioMdhdTimescale)
+	videoTrak.Tkhd.Duration = videoMovieDur
+	audioTrack.Tkhd.Duration = audioMovieDur
+
+	moov.Mvhd.Duration = videoMovieDur
+	if audioMovieDur > moov.Mvhd.Duration {
+		moov.Mvhd.Duration = audioMovieDur
+	}
+
 	out := mp4.NewFile()
 	out.AddChild(ftyp, 0)
 	out.AddChild(moov, ftyp.Size())
@@ -263,6 +400,46 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 	}
 
 	return out.Encode(w)
+}
+
+// sumFragmentDurations totals the trun durations of every fragment that
+// belongs to the trex's track, falling back to the per-fragment or trex
+// default sample duration when individual sample durations are absent.
+func sumFragmentDurations(fragments []*mp4.Fragment, trex *mp4.TrexBox) uint64 {
+	if trex == nil {
+		return 0
+	}
+	var total uint64
+	for _, frag := range fragments {
+		if frag == nil || frag.Moof == nil {
+			continue
+		}
+		for _, traf := range frag.Moof.Trafs {
+			if traf == nil || traf.Tfhd == nil || traf.Tfhd.TrackID != trex.TrackID {
+				continue
+			}
+			defaultDur := trex.DefaultSampleDuration
+			if traf.Tfhd.HasDefaultSampleDuration() {
+				defaultDur = traf.Tfhd.DefaultSampleDuration
+			}
+			for _, trun := range traf.Truns {
+				if trun == nil {
+					continue
+				}
+				total += trun.Duration(defaultDur)
+			}
+		}
+	}
+	return total
+}
+
+// scaleDuration converts duration from one timescale to another using
+// integer math, guarding against zero divisors.
+func scaleDuration(dur, dstTimescale, srcTimescale uint64) uint64 {
+	if srcTimescale == 0 {
+		return 0
+	}
+	return dur * dstTimescale / srcTimescale
 }
 
 func sourceTrack(file *mp4.File, handlerType string) (*mp4.TrakBox, *mp4.TrexBox, error) {
@@ -355,4 +532,3 @@ func collectFragments(file *mp4.File) []*mp4.Fragment {
 	}
 	return fragments
 }
-
