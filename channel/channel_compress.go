@@ -98,10 +98,12 @@ func (ch *Channel) CompressFile(srcPath string) {
 
 		ch.Info("compress: encoding %s (%s) using %s", srcFilename, internal.FormatFilesize(int(srcSize)), encoder.name)
 
-		// Build ffmpeg command
-		args := []string{"-y", "-i", srcPath, "-c:v", encoder.codec}
+		// Preserve the recorded timeline while re-encoding. LL-HLS/fMP4
+		// inputs often carry variable frame timing; letting ffmpeg
+		// normalize frame cadence can make audio drift during compression.
+		args := []string{"-y", "-copyts", "-start_at_zero", "-i", srcPath, "-c:v", encoder.codec}
 		args = append(args, encoder.args...)
-		args = append(args, "-c:a", "aac", "-b:a", "128k", mkvPath)
+		args = append(args, "-fps_mode", "passthrough", "-c:a", "aac", "-b:a", "128k", "-avoid_negative_ts", "make_zero", mkvPath)
 
 		cmd := exec.Command("ffmpeg", args...)
 		output, err := cmd.CombinedOutput()
@@ -239,13 +241,30 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 		return err
 	}
 
+	// Compute total media-timescale duration from the source fragments
+	// while track IDs still match the original trex values, so the duration
+	// hints written into mvhd/tkhd/mdhd reflect the real recorded length.
+	// Without this, mvhd.Duration stays 0 (the value from a live init
+	// segment), and players that read it as a hint instead of scanning every
+	// fragment report the recording as much shorter than it is.
+	videoMediaDur := sumFragmentDurations(videoFragments, videoTrex)
+	audioMediaDur := sumFragmentDurations(audioFragments, audioTrex)
+
 	ftyp := videoFile.Init.Ftyp
 	moov := videoFile.Init.Moov
 	if len(moov.Traks) != 1 || moov.Mvex == nil || len(moov.Mvex.Trexs) != 1 {
 		return fmt.Errorf("expected single-track video init")
 	}
 
-	moov.Traks[0].Tkhd.TrackID = videoTrackID
+	videoTrak := moov.Traks[0]
+	if videoTrak.Mdia == nil || videoTrak.Mdia.Mdhd == nil {
+		return fmt.Errorf("video track missing mdhd")
+	}
+	if audioTrack.Mdia == nil || audioTrack.Mdia.Mdhd == nil {
+		return fmt.Errorf("audio track missing mdhd")
+	}
+
+	videoTrak.Tkhd.TrackID = videoTrackID
 	moov.Mvex.Trexs[0].TrackID = videoTrackID
 
 	audioTrack.Tkhd.TrackID = audioTrackID
@@ -255,6 +274,26 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 	moov.Mvex.AddChild(audioTrex)
 	moov.Mvhd.NextTrackID = audioTrackID + 1
 
+	movieTimescale := uint64(moov.Mvhd.Timescale)
+	if movieTimescale == 0 {
+		movieTimescale = 1
+	}
+	videoMdhdTimescale := uint64(videoTrak.Mdia.Mdhd.Timescale)
+	audioMdhdTimescale := uint64(audioTrack.Mdia.Mdhd.Timescale)
+
+	videoTrak.Mdia.Mdhd.Duration = videoMediaDur
+	audioTrack.Mdia.Mdhd.Duration = audioMediaDur
+
+	videoMovieDur := scaleDuration(videoMediaDur, movieTimescale, videoMdhdTimescale)
+	audioMovieDur := scaleDuration(audioMediaDur, movieTimescale, audioMdhdTimescale)
+	videoTrak.Tkhd.Duration = videoMovieDur
+	audioTrack.Tkhd.Duration = audioMovieDur
+
+	moov.Mvhd.Duration = videoMovieDur
+	if audioMovieDur > moov.Mvhd.Duration {
+		moov.Mvhd.Duration = audioMovieDur
+	}
+
 	out := mp4.NewFile()
 	out.AddChild(ftyp, 0)
 	out.AddChild(moov, ftyp.Size())
@@ -263,6 +302,46 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 	}
 
 	return out.Encode(w)
+}
+
+// sumFragmentDurations totals the trun durations of every fragment that
+// belongs to the trex's track, falling back to the per-fragment or trex
+// default sample duration when individual sample durations are absent.
+func sumFragmentDurations(fragments []*mp4.Fragment, trex *mp4.TrexBox) uint64 {
+	if trex == nil {
+		return 0
+	}
+	var total uint64
+	for _, frag := range fragments {
+		if frag == nil || frag.Moof == nil {
+			continue
+		}
+		for _, traf := range frag.Moof.Trafs {
+			if traf == nil || traf.Tfhd == nil || traf.Tfhd.TrackID != trex.TrackID {
+				continue
+			}
+			defaultDur := trex.DefaultSampleDuration
+			if traf.Tfhd.HasDefaultSampleDuration() {
+				defaultDur = traf.Tfhd.DefaultSampleDuration
+			}
+			for _, trun := range traf.Truns {
+				if trun == nil {
+					continue
+				}
+				total += trun.Duration(defaultDur)
+			}
+		}
+	}
+	return total
+}
+
+// scaleDuration converts duration from one timescale to another using
+// integer math, guarding against zero divisors.
+func scaleDuration(dur, dstTimescale, srcTimescale uint64) uint64 {
+	if srcTimescale == 0 {
+		return 0
+	}
+	return dur * dstTimescale / srcTimescale
 }
 
 func sourceTrack(file *mp4.File, handlerType string) (*mp4.TrakBox, *mp4.TrexBox, error) {
@@ -355,4 +434,3 @@ func collectFragments(file *mp4.File) []*mp4.Fragment {
 	}
 	return fragments
 }
-
