@@ -25,6 +25,14 @@ var (
 	detectedEncoderOnce sync.Once
 )
 
+// Frame-timing flag detection cache. ffmpeg 5+ uses -fps_mode (per-stream);
+// 4.x only knows the legacy global -vsync. Probing once at runtime keeps
+// CompressFile working on either generation without a static dependency.
+var (
+	fpsPassthroughFlag []string
+	fpsPassthroughOnce sync.Once
+)
+
 // videoEncoder represents a video encoder configuration
 type videoEncoder struct {
 	name  string   // display name
@@ -57,6 +65,25 @@ func detectEncoder() (videoEncoder, string) {
 	}
 	// Should not reach here since libx264 is always available if ffmpeg is installed
 	return availableEncoders[len(availableEncoders)-1], "CPU"
+}
+
+// getFpsPassthroughFlag returns the ffmpeg flag(s) that pass each video
+// frame's timestamp straight through to the muxer. Modern ffmpeg uses
+// -fps_mode passthrough; older 4.x exits with "Unrecognized option
+// 'fps_mode'", so we probe support once and fall back to -vsync passthrough
+// (deprecated on 5+, but still functional through ffmpeg 8).
+func getFpsPassthroughFlag() []string {
+	fpsPassthroughOnce.Do(func() {
+		cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error",
+			"-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.05",
+			"-fps_mode", "passthrough", "-f", "null", "-")
+		if err := cmd.Run(); err == nil {
+			fpsPassthroughFlag = []string{"-fps_mode", "passthrough"}
+		} else {
+			fpsPassthroughFlag = []string{"-vsync", "passthrough"}
+		}
+	})
+	return fpsPassthroughFlag
 }
 
 // getEncoder returns the cached encoder or detects one
@@ -103,7 +130,8 @@ func (ch *Channel) CompressFile(srcPath string) {
 		// normalize frame cadence can make audio drift during compression.
 		args := []string{"-y", "-copyts", "-start_at_zero", "-i", srcPath, "-c:v", encoder.codec}
 		args = append(args, encoder.args...)
-		args = append(args, "-fps_mode", "passthrough", "-c:a", "aac", "-b:a", "128k", "-avoid_negative_ts", "make_zero", mkvPath)
+		args = append(args, getFpsPassthroughFlag()...)
+		args = append(args, "-c:a", "aac", "-b:a", "128k", "-avoid_negative_ts", "make_zero", mkvPath)
 
 		cmd := exec.Command("ffmpeg", args...)
 		output, err := cmd.CombinedOutput()

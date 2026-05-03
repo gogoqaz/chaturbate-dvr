@@ -403,6 +403,8 @@ esac
 
 	detectedEncoder = ""
 	detectedEncoderOnce = sync.Once{}
+	fpsPassthroughFlag = nil
+	fpsPassthroughOnce = sync.Once{}
 
 	srcPath := filepath.Join(dir, "recording.mp4")
 	if err := os.WriteFile(srcPath, []byte("source-video"), 0644); err != nil {
@@ -430,10 +432,17 @@ esac
 
 	lines := strings.Split(strings.TrimSpace(log), "\n")
 	compressArgs := lines[len(lines)-1]
-	for _, want := range []string{"-copyts", "-start_at_zero", "-fps_mode passthrough"} {
+	for _, want := range []string{"-copyts", "-start_at_zero"} {
 		if !strings.Contains(compressArgs, want) {
 			t.Fatalf("compress args = %q, want %q to preserve input timing", compressArgs, want)
 		}
+	}
+	// Accept either modern (-fps_mode passthrough) or legacy (-vsync
+	// passthrough) frame-timing flag, since the chosen one depends on the
+	// installed ffmpeg version.
+	if !strings.Contains(compressArgs, "-fps_mode passthrough") &&
+		!strings.Contains(compressArgs, "-vsync passthrough") {
+		t.Fatalf("compress args = %q, want -fps_mode or -vsync passthrough", compressArgs)
 	}
 }
 
