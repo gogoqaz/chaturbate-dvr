@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -86,6 +87,69 @@ func getFpsPassthroughFlag() []string {
 	return fpsPassthroughFlag
 }
 
+// detectStreamStartOffsetSec returns the seconds that should be skipped from
+// the input so the muxed video and audio first samples line up at output time
+// zero. LL-HLS video and audio playlists are independent, so the first
+// fetched fragment from each rarely covers the same wall-clock moment; the
+// later stream's first sample sits at output PTS=delta with the earlier
+// stream filling delta seconds of leading silence/black, which the user
+// reads as "A/V is off". Probing the muxed input lets the compress step skip
+// that leading mismatch while re-encoding (where -ss is sample-accurate).
+//
+// Returns 0 when probing fails, ffprobe is unavailable, or the offset is
+// below alignTrimThreshold (no point trimming sub-frame jitter).
+func detectStreamStartOffsetSec(srcPath string) float64 {
+	probe := func(stream string) (float64, bool) {
+		cmd := exec.Command("ffprobe", "-v", "error",
+			"-select_streams", stream,
+			"-show_entries", "stream=start_time",
+			"-of", "csv=p=0", srcPath)
+		out, err := cmd.Output()
+		if err != nil {
+			return 0, false
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+	videoStart, vOK := probe("v:0")
+	audioStart, aOK := probe("a:0")
+	if !vOK || !aOK {
+		return 0
+	}
+	skip := videoStart
+	if audioStart > skip {
+		skip = audioStart
+	}
+	if skip < alignTrimThreshold {
+		return 0
+	}
+	return skip
+}
+
+// alignTrimThreshold is the minimum mismatch (seconds) before we bother
+// trimming. Anything below this is sub-frame jitter that ffmpeg's existing
+// -avoid_negative_ts already handles cleanly.
+const alignTrimThreshold = 0.05
+
+// buildCompressArgs assembles the ffmpeg command line for compress, isolated
+// for testability. skipSec, when above the threshold, becomes an input-side
+// -ss so the leading misaligned segment is dropped accurately by the
+// re-encoder.
+func buildCompressArgs(srcPath, mkvPath string, encoder videoEncoder, fpsFlag []string, skipSec float64) []string {
+	args := []string{"-y", "-copyts", "-start_at_zero"}
+	if skipSec >= alignTrimThreshold {
+		args = append(args, "-ss", strconv.FormatFloat(skipSec, 'f', 3, 64))
+	}
+	args = append(args, "-i", srcPath, "-c:v", encoder.codec)
+	args = append(args, encoder.args...)
+	args = append(args, fpsFlag...)
+	args = append(args, "-c:a", "aac", "-b:a", "128k", "-avoid_negative_ts", "make_zero", mkvPath)
+	return args
+}
+
 // getEncoder returns the cached encoder or detects one
 func getEncoder() videoEncoder {
 	detectedEncoderOnce.Do(func() {
@@ -123,15 +187,21 @@ func (ch *Channel) CompressFile(srcPath string) {
 		// Get the best available encoder
 		encoder := getEncoder()
 
+		// Detect any leading misalignment between the muxed video/audio so
+		// the re-encoder can drop the leading silent gap. Probing happens
+		// before the size log so the message reflects whatever portion will
+		// actually end up in the output.
+		skipSec := detectStreamStartOffsetSec(srcPath)
+		if skipSec >= alignTrimThreshold {
+			ch.Info("compress: trimming %.3fs of leading misalignment from %s", skipSec, srcFilename)
+		}
+
 		ch.Info("compress: encoding %s (%s) using %s", srcFilename, internal.FormatFilesize(int(srcSize)), encoder.name)
 
 		// Preserve the recorded timeline while re-encoding. LL-HLS/fMP4
 		// inputs often carry variable frame timing; letting ffmpeg
 		// normalize frame cadence can make audio drift during compression.
-		args := []string{"-y", "-copyts", "-start_at_zero", "-i", srcPath, "-c:v", encoder.codec}
-		args = append(args, encoder.args...)
-		args = append(args, getFpsPassthroughFlag()...)
-		args = append(args, "-c:a", "aac", "-b:a", "128k", "-avoid_negative_ts", "make_zero", mkvPath)
+		args := buildCompressArgs(srcPath, mkvPath, encoder, getFpsPassthroughFlag(), skipSec)
 
 		cmd := exec.Command("ffmpeg", args...)
 		output, err := cmd.CombinedOutput()

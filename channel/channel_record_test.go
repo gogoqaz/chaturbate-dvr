@@ -399,6 +399,12 @@ esac
 	if err := os.WriteFile(ffmpegPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write fake ffmpeg: %v", err)
 	}
+	// Stub ffprobe to report aligned streams so this test only checks the
+	// timing-preservation flags. Offset trimming is exercised separately.
+	ffprobePath := filepath.Join(dir, "ffprobe")
+	if err := os.WriteFile(ffprobePath, []byte("#!/bin/sh\necho 0.000000\n"), 0755); err != nil {
+		t.Fatalf("write fake ffprobe: %v", err)
+	}
 	t.Setenv("PATH", dir)
 
 	detectedEncoder = ""
@@ -444,6 +450,87 @@ esac
 		!strings.Contains(compressArgs, "-vsync passthrough") {
 		t.Fatalf("compress args = %q, want -fps_mode or -vsync passthrough", compressArgs)
 	}
+	// Aligned streams (ffprobe stub returns 0) must not insert -ss.
+	if strings.Contains(compressArgs, "-ss ") {
+		t.Fatalf("compress args = %q, did not expect -ss when streams are aligned", compressArgs)
+	}
+}
+
+func TestBuildCompressArgsAddsLeadingTrim(t *testing.T) {
+	t.Parallel()
+
+	enc := videoEncoder{name: "CPU", codec: "libx264", args: []string{"-preset", "medium", "-crf", "23"}}
+	fps := []string{"-fps_mode", "passthrough"}
+
+	aligned := buildCompressArgs("/in.mp4", "/out.mkv", enc, fps, 0)
+	if containsArg(aligned, "-ss") {
+		t.Fatalf("aligned compress args contain -ss: %v", aligned)
+	}
+
+	misaligned := buildCompressArgs("/in.mp4", "/out.mkv", enc, fps, 1.246)
+	idx := indexOfArg(misaligned, "-ss")
+	if idx < 0 {
+		t.Fatalf("misaligned compress args missing -ss: %v", misaligned)
+	}
+	if got := misaligned[idx+1]; got != "1.246" {
+		t.Fatalf("-ss value = %q, want 1.246", got)
+	}
+	// -ss must precede -i so it applies as input-side seek.
+	if iIdx := indexOfArg(misaligned, "-i"); iIdx <= idx {
+		t.Fatalf("-ss (%d) must come before -i (%d): %v", idx, iIdx, misaligned)
+	}
+
+	// Sub-threshold offsets are ignored to avoid trimming sub-frame jitter.
+	jitter := buildCompressArgs("/in.mp4", "/out.mkv", enc, fps, 0.02)
+	if containsArg(jitter, "-ss") {
+		t.Fatalf("sub-threshold offset triggered -ss: %v", jitter)
+	}
+}
+
+func TestDetectStreamStartOffsetSecWithFakeFFprobe(t *testing.T) {
+	dir := t.TempDir()
+	ffprobe := filepath.Join(dir, "ffprobe")
+	// Fake ffprobe replies with the value matching the requested stream.
+	script := `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    "v:0") want=v ;;
+    "a:0") want=a ;;
+  esac
+done
+case "$want" in
+  v) echo 0.000000 ;;
+  a) echo 1.246000 ;;
+esac
+`
+	if err := os.WriteFile(ffprobe, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake ffprobe: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	got := detectStreamStartOffsetSec(filepath.Join(dir, "irrelevant.mp4"))
+	if got < 1.245 || got > 1.247 {
+		t.Fatalf("detected offset = %v, want ~1.246", got)
+	}
+
+	// Probe failure (ffprobe missing) returns 0 without panicking.
+	t.Setenv("PATH", t.TempDir())
+	if got := detectStreamStartOffsetSec("/nope.mp4"); got != 0 {
+		t.Fatalf("expected 0 when ffprobe missing, got %v", got)
+	}
+}
+
+func containsArg(args []string, target string) bool {
+	return indexOfArg(args, target) >= 0
+}
+
+func indexOfArg(args []string, target string) int {
+	for i, a := range args {
+		if a == target {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestNativeMuxWritesNonZeroDuration(t *testing.T) {
