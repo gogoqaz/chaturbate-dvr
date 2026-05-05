@@ -490,33 +490,109 @@ func TestBuildCompressArgsAddsLeadingTrim(t *testing.T) {
 func TestDetectStreamStartOffsetSecWithFakeFFprobe(t *testing.T) {
 	dir := t.TempDir()
 	ffprobe := filepath.Join(dir, "ffprobe")
-	// Fake ffprobe replies with the value matching the requested stream.
+	// Fake ffprobe reads the desired video/audio start times from env vars
+	// so individual sub-cases can drive different scenarios.
 	script := `#!/bin/sh
 for arg in "$@"; do
   case "$arg" in
-    "v:0") want=v ;;
-    "a:0") want=a ;;
+    "v:0") echo "$FAKE_V_START" ; exit 0 ;;
+    "a:0") echo "$FAKE_A_START" ; exit 0 ;;
   esac
 done
-case "$want" in
-  v) echo 0.000000 ;;
-  a) echo 1.246000 ;;
-esac
+exit 1
 `
 	if err := os.WriteFile(ffprobe, []byte(script), 0755); err != nil {
 		t.Fatalf("write fake ffprobe: %v", err)
 	}
 	t.Setenv("PATH", dir)
 
-	got := detectStreamStartOffsetSec(filepath.Join(dir, "irrelevant.mp4"))
-	if got < 1.245 || got > 1.247 {
-		t.Fatalf("detected offset = %v, want ~1.246", got)
+	cases := []struct {
+		name      string
+		v, a      string
+		want      float64
+		wantTrim  bool
+		tolerance float64
+	}{
+		{name: "video leads", v: "0.000000", a: "1.246000", want: 1.246, wantTrim: true, tolerance: 0.001},
+		{name: "audio leads", v: "1.246000", a: "0.000000", want: 1.246, wantTrim: true, tolerance: 0.001},
+		{name: "aligned at zero", v: "0.000000", a: "0.000000", want: 0, wantTrim: false},
+		{name: "aligned at non-zero baseline", v: "1.500000", a: "1.500000", want: 0, wantTrim: false},
+		{name: "near-zero jitter ignored", v: "0.000000", a: "0.020000", want: 0, wantTrim: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAKE_V_START", tc.v)
+			t.Setenv("FAKE_A_START", tc.a)
+			got := detectStreamStartOffsetSec(filepath.Join(dir, "irrelevant.mp4"))
+			if !tc.wantTrim {
+				if got != 0 {
+					t.Fatalf("got skip = %v, want 0 (no trim)", got)
+				}
+				return
+			}
+			if got < tc.want-tc.tolerance || got > tc.want+tc.tolerance {
+				t.Fatalf("got skip = %v, want %v ±%v", got, tc.want, tc.tolerance)
+			}
+		})
 	}
 
 	// Probe failure (ffprobe missing) returns 0 without panicking.
 	t.Setenv("PATH", t.TempDir())
 	if got := detectStreamStartOffsetSec("/nope.mp4"); got != 0 {
 		t.Fatalf("expected 0 when ffprobe missing, got %v", got)
+	}
+}
+
+func TestNativeMuxPromotesVersionForLongDurations(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+
+	// Fragment Dur = timescale = 1e9 ticks (1 second wallclock per fragment).
+	// Five fragments yields 5e9 mdhd ticks per track, which exceeds the
+	// version-0 32-bit Duration limit (~4.29e9). Without version promotion
+	// mp4ff would truncate the encoded duration silently.
+	const hugeTimescale uint32 = 1_000_000_000
+	videoMP4 := buildFragmentedMP4WithSamples(t, "video", hugeTimescale, []byte{0x00, 0x00, 0x00, 0x01, 0x67}, 5)
+	audioMP4 := buildFragmentedMP4WithSamples(t, "audio", hugeTimescale, []byte{0xFF, 0xF1}, 5)
+
+	base := filepath.Join(dir, "long")
+	ch := New(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	ch.HasSeparateAudio = true
+	ch.CurrentFilename = base
+	ch.InitSegment = videoMP4
+	ch.AudioInitSegment = audioMP4
+
+	if err := ch.CreateNewFile(base); err != nil {
+		t.Fatalf("CreateNewFile() error = %v", err)
+	}
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+
+	muxed, err := mp4.ReadMP4File(base + ".mp4")
+	if err != nil {
+		t.Fatalf("ReadMP4File() error = %v", err)
+	}
+
+	mdhdLimit := uint64(0xFFFFFFFF)
+	for _, trak := range muxed.Init.Moov.Traks {
+		mdhd := trak.Mdia.Mdhd
+		if mdhd.Duration > mdhdLimit && mdhd.Version == 0 {
+			t.Fatalf("track %d mdhd has version 0 with duration %d (overflows uint32)", trak.Tkhd.TrackID, mdhd.Duration)
+		}
+		if trak.Tkhd.Duration > mdhdLimit && trak.Tkhd.Version == 0 {
+			t.Fatalf("track %d tkhd has version 0 with duration %d (overflows uint32)", trak.Tkhd.TrackID, trak.Tkhd.Duration)
+		}
+	}
+	mvhd := muxed.Init.Moov.Mvhd
+	if mvhd.Duration > mdhdLimit && mvhd.Version == 0 {
+		t.Fatalf("mvhd has version 0 with duration %d (overflows uint32)", mvhd.Duration)
+	}
+	// And the durations must reflect the input length, not a wrapped value.
+	expectedSeconds := 5.0
+	gotSeconds := float64(mvhd.Duration) / float64(mvhd.Timescale)
+	if gotSeconds < expectedSeconds-0.5 || gotSeconds > expectedSeconds+0.5 {
+		t.Fatalf("mvhd reports %.2fs, want ~%vs", gotSeconds, expectedSeconds)
 	}
 }
 

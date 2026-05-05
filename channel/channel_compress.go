@@ -119,14 +119,22 @@ func detectStreamStartOffsetSec(srcPath string) float64 {
 	if !vOK || !aOK {
 		return 0
 	}
-	skip := videoStart
-	if audioStart > skip {
-		skip = audioStart
+	// Trim is only justified when the two streams disagree about where they
+	// start. If both share the same baseline (e.g. both at 1.5s on inputs
+	// produced by other tools), -ss would chop real aligned content even
+	// though there is nothing to fix. Compare the offset between streams,
+	// not the absolute baseline.
+	diff := videoStart - audioStart
+	if diff < 0 {
+		diff = -diff
 	}
-	if skip < alignTrimThreshold {
+	if diff < alignTrimThreshold {
 		return 0
 	}
-	return skip
+	if videoStart > audioStart {
+		return videoStart
+	}
+	return audioStart
 }
 
 // alignTrimThreshold is the minimum mismatch (seconds) before we bother
@@ -380,17 +388,22 @@ func writeCombinedFragmentedMP4(w io.Writer, videoFile, audioFile *mp4.File, war
 	audioMdhdTimescale := uint64(audioTrack.Mdia.Mdhd.Timescale)
 
 	videoTrak.Mdia.Mdhd.Duration = videoMediaDur
+	promoteVersionForLongDuration(&videoTrak.Mdia.Mdhd.Version, videoMediaDur)
 	audioTrack.Mdia.Mdhd.Duration = audioMediaDur
+	promoteVersionForLongDuration(&audioTrack.Mdia.Mdhd.Version, audioMediaDur)
 
 	videoMovieDur := scaleDuration(videoMediaDur, movieTimescale, videoMdhdTimescale)
 	audioMovieDur := scaleDuration(audioMediaDur, movieTimescale, audioMdhdTimescale)
 	videoTrak.Tkhd.Duration = videoMovieDur
+	promoteVersionForLongDuration(&videoTrak.Tkhd.Version, videoMovieDur)
 	audioTrack.Tkhd.Duration = audioMovieDur
+	promoteVersionForLongDuration(&audioTrack.Tkhd.Version, audioMovieDur)
 
 	moov.Mvhd.Duration = videoMovieDur
 	if audioMovieDur > moov.Mvhd.Duration {
 		moov.Mvhd.Duration = audioMovieDur
 	}
+	promoteVersionForLongDuration(&moov.Mvhd.Version, moov.Mvhd.Duration)
 
 	out := mp4.NewFile()
 	out.AddChild(ftyp, 0)
@@ -440,6 +453,25 @@ func scaleDuration(dur, dstTimescale, srcTimescale uint64) uint64 {
 		return 0
 	}
 	return dur * dstTimescale / srcTimescale
+}
+
+// maxV0Duration is the largest value mp4ff can serialize into a version-0
+// mvhd/tkhd/mdhd Duration field; the wire format uses uint32 there. At a
+// 90 kHz video timescale this caps version-0 boxes at ~13.25 hours.
+const maxV0Duration uint64 = 0xFFFFFFFF
+
+// promoteVersionForLongDuration upgrades a header box from version 0 to
+// version 1 when the duration to be encoded exceeds the 32-bit field used
+// in the version-0 wire format. Without this, recordings longer than the
+// version-0 limit would be silently truncated by mp4ff's encoder even
+// though we set the uint64 Duration field to the correct value.
+func promoteVersionForLongDuration(version *byte, duration uint64) {
+	if version == nil {
+		return
+	}
+	if duration > maxV0Duration && *version == 0 {
+		*version = 1
+	}
 }
 
 func sourceTrack(file *mp4.File, handlerType string) (*mp4.TrakBox, *mp4.TrexBox, error) {
