@@ -407,6 +407,17 @@ esac
 	}
 	t.Setenv("PATH", dir)
 
+	oldDetectedEncoder := detectedEncoder
+	oldDetectedEncoderOnce := detectedEncoderOnce
+	oldFpsPassthroughFlag := append([]string(nil), fpsPassthroughFlag...)
+	oldFpsPassthroughOnce := fpsPassthroughOnce
+	t.Cleanup(func() {
+		detectedEncoder = oldDetectedEncoder
+		detectedEncoderOnce = oldDetectedEncoderOnce
+		fpsPassthroughFlag = oldFpsPassthroughFlag
+		fpsPassthroughOnce = oldFpsPassthroughOnce
+	})
+
 	detectedEncoder = ""
 	detectedEncoderOnce = sync.Once{}
 	fpsPassthroughFlag = nil

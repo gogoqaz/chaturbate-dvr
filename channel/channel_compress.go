@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/teacat/chaturbate-dvr/internal"
@@ -19,6 +21,8 @@ const (
 	videoTrackID uint32 = 1
 	audioTrackID uint32 = 2
 )
+
+const ffmpegProbeTimeout = 5 * time.Second
 
 // GPU encoder detection cache
 var (
@@ -75,7 +79,9 @@ func detectEncoder() (videoEncoder, string) {
 // (deprecated on 5+, but still functional through ffmpeg 8).
 func getFpsPassthroughFlag() []string {
 	fpsPassthroughOnce.Do(func() {
-		cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error",
+		ctx, cancel := context.WithTimeout(context.Background(), ffmpegProbeTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
 			"-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.05",
 			"-fps_mode", "passthrough", "-f", "null", "-")
 		if err := cmd.Run(); err == nil {
@@ -100,7 +106,9 @@ func getFpsPassthroughFlag() []string {
 // below alignTrimThreshold (no point trimming sub-frame jitter).
 func detectStreamStartOffsetSec(srcPath string) float64 {
 	probe := func(stream string) (float64, bool) {
-		cmd := exec.Command("ffprobe", "-v", "error",
+		ctx, cancel := context.WithTimeout(context.Background(), ffmpegProbeTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error",
 			"-select_streams", stream,
 			"-show_entries", "stream=start_time",
 			"-of", "csv=p=0", srcPath)
