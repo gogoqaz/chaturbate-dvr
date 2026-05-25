@@ -408,14 +408,12 @@ esac
 	t.Setenv("PATH", dir)
 
 	oldDetectedEncoder := detectedEncoder
-	oldDetectedEncoderOnce := detectedEncoderOnce
 	oldFpsPassthroughFlag := append([]string(nil), fpsPassthroughFlag...)
-	oldFpsPassthroughOnce := fpsPassthroughOnce
 	t.Cleanup(func() {
 		detectedEncoder = oldDetectedEncoder
-		detectedEncoderOnce = oldDetectedEncoderOnce
 		fpsPassthroughFlag = oldFpsPassthroughFlag
-		fpsPassthroughOnce = oldFpsPassthroughOnce
+		detectedEncoderOnce = sync.Once{}
+		fpsPassthroughOnce = sync.Once{}
 	})
 
 	detectedEncoder = ""
@@ -528,6 +526,7 @@ exit 1
 		{name: "audio leads", v: "1.246000", a: "0.000000", want: 1.246, wantTrim: true, tolerance: 0.001},
 		{name: "aligned at zero", v: "0.000000", a: "0.000000", want: 0, wantTrim: false},
 		{name: "aligned at non-zero baseline", v: "1.500000", a: "1.500000", want: 0, wantTrim: false},
+		{name: "offset from non-zero baseline", v: "120.000000", a: "121.000000", want: 1.000, wantTrim: true, tolerance: 0.001},
 		{name: "near-zero jitter ignored", v: "0.000000", a: "0.020000", want: 0, wantTrim: false},
 	}
 	for _, tc := range cases {

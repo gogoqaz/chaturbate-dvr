@@ -139,10 +139,7 @@ func detectStreamStartOffsetSec(srcPath string) float64 {
 	if diff < alignTrimThreshold {
 		return 0
 	}
-	if videoStart > audioStart {
-		return videoStart
-	}
-	return audioStart
+	return diff
 }
 
 // alignTrimThreshold is the minimum mismatch (seconds) before we bother
