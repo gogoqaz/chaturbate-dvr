@@ -225,6 +225,7 @@ func (ch *Channel) HandleSegment(b []byte, duration float64) error {
 	}
 
 	n, err := ch.File.Write(b)
+	ch.videoMediaBytes += n
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
@@ -281,7 +282,9 @@ func (ch *Channel) HandleAudioSegment(b []byte, _ float64) error {
 		return retry.Unrecoverable(internal.ErrPaused)
 	}
 
-	if _, err := ch.AudioFile.Write(b); err != nil {
+	n, err := ch.AudioFile.Write(b)
+	ch.audioMediaBytes += n
+	if err != nil {
 		return fmt.Errorf("write audio file: %w", err)
 	}
 	return nil
