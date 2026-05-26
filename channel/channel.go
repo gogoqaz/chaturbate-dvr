@@ -38,6 +38,8 @@ type Channel struct {
 	AudioInitSegment []byte // fMP4 audio init segment for LL-HLS streams
 	HasSeparateAudio bool
 	switchRequested  bool // set by HandleSegment, consumed by OnPollComplete
+	videoMediaBytes  int
+	audioMediaBytes  int
 }
 
 // New creates a new channel instance with the given manager and configuration.

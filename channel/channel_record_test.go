@@ -134,6 +134,11 @@ func buildFragmentedMP4WithSamples(t *testing.T, mediaType string, timescale uin
 	return buf.Bytes()
 }
 
+func markSeparateTrackMediaWritten(ch *Channel, videoData, audioData []byte) {
+	ch.videoMediaBytes = len(videoData)
+	ch.audioMediaBytes = len(audioData)
+}
+
 func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
@@ -154,6 +159,7 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	if err := ch.CreateNewFile(base); err != nil {
 		t.Fatalf("CreateNewFile() error = %v", err)
 	}
+	markSeparateTrackMediaWritten(ch, videoMP4, audioMP4)
 
 	if err := ch.Cleanup(); err != nil {
 		t.Fatalf("Cleanup() error = %v", err)
@@ -181,6 +187,39 @@ func TestCleanupNativeMuxesSeparateTracksWhenFFmpegUnavailable(t *testing.T) {
 	}
 	if len(muxed.Init.Moov.Traks) != 2 {
 		t.Fatalf("expected 2 tracks in muxed output, got %d", len(muxed.Init.Moov.Traks))
+	}
+}
+
+func TestCleanupDropsInitOnlySeparateTrackFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	base := filepath.Join(dir, "recording")
+	ch := New(&entity.ChannelConfig{
+		Username: "alice",
+		Pattern:  base,
+	})
+	ch.HasSeparateAudio = true
+	ch.CurrentFilename = base
+	ch.InitSegment = []byte("video-init-only")
+	ch.AudioInitSegment = []byte("audio-init-only")
+
+	if err := ch.CreateNewFile(base); err != nil {
+		t.Fatalf("CreateNewFile() error = %v", err)
+	}
+
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+
+	if _, err := os.Stat(base + ".mp4"); !os.IsNotExist(err) {
+		t.Fatalf("expected no muxed output for init-only files, stat err = %v", err)
+	}
+	if _, err := os.Stat(base + ".video.mp4"); !os.IsNotExist(err) {
+		t.Fatalf("expected init-only video sidecar removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(base + ".audio.mp4"); !os.IsNotExist(err) {
+		t.Fatalf("expected init-only audio sidecar removed, stat err = %v", err)
 	}
 }
 
@@ -312,6 +351,7 @@ func TestCleanupPreservesAudioOnlyWhenVideoMissing(t *testing.T) {
 	ch.HasSeparateAudio = true
 	ch.CurrentFilename = base
 	ch.AudioFile = audioFile
+	ch.audioMediaBytes = len("audio-payload")
 
 	if err := ch.Cleanup(); err != nil {
 		t.Fatalf("Cleanup() error = %v", err)
@@ -337,6 +377,7 @@ func TestCleanupPreservesVideoOnlyWhenAudioMissing(t *testing.T) {
 	ch.HasSeparateAudio = true
 	ch.CurrentFilename = base
 	ch.File = videoFile
+	ch.videoMediaBytes = len("video-payload")
 
 	if err := ch.Cleanup(); err != nil {
 		t.Fatalf("Cleanup() error = %v", err)
@@ -575,6 +616,7 @@ func TestNativeMuxPromotesVersionForLongDurations(t *testing.T) {
 	if err := ch.CreateNewFile(base); err != nil {
 		t.Fatalf("CreateNewFile() error = %v", err)
 	}
+	markSeparateTrackMediaWritten(ch, videoMP4, audioMP4)
 	if err := ch.Cleanup(); err != nil {
 		t.Fatalf("Cleanup() error = %v", err)
 	}
@@ -640,6 +682,7 @@ func TestNativeMuxWritesNonZeroDuration(t *testing.T) {
 	if err := ch.CreateNewFile(base); err != nil {
 		t.Fatalf("CreateNewFile() error = %v", err)
 	}
+	markSeparateTrackMediaWritten(ch, videoMP4, audioMP4)
 	if err := ch.Cleanup(); err != nil {
 		t.Fatalf("Cleanup() error = %v", err)
 	}

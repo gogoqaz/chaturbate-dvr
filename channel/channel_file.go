@@ -57,6 +57,8 @@ func (ch *Channel) Cleanup() error {
 		ch.CurrentFilename = ""
 		ch.Filesize = 0
 		ch.Duration = 0
+		ch.videoMediaBytes = 0
+		ch.audioMediaBytes = 0
 	}()
 
 	videoFilename, videoInfo, err := closeTrackedFile(ch.File)
@@ -69,10 +71,25 @@ func (ch *Channel) Cleanup() error {
 	}
 
 	if ch.HasSeparateAudio {
+		videoHasMedia := ch.videoMediaBytes > 0
+		audioHasMedia := ch.audioMediaBytes > 0
+		if !videoHasMedia && videoInfo != nil {
+			if err := os.Remove(videoFilename); err != nil {
+				return fmt.Errorf("remove init-only video file: %w", err)
+			}
+			videoInfo = nil
+		}
+		if !audioHasMedia && audioInfo != nil {
+			if err := os.Remove(audioFilename); err != nil {
+				return fmt.Errorf("remove init-only audio file: %w", err)
+			}
+			audioInfo = nil
+		}
+
 		switch {
-		case videoInfo == nil && audioInfo == nil:
+		case !videoHasMedia && !audioHasMedia:
 			return nil
-		case videoInfo == nil:
+		case !videoHasMedia || videoInfo == nil:
 			ch.Info("mux: video track missing; preserving audio-only file %s", filepath.Base(audioFilename))
 			if ch.Config.Compress {
 				ch.CompressFile(audioFilename)
@@ -80,7 +97,7 @@ func (ch *Channel) Cleanup() error {
 				ch.MoveToOutputDir(audioFilename)
 			}
 			return nil
-		case audioInfo == nil:
+		case !audioHasMedia || audioInfo == nil:
 			ch.Info("mux: audio track missing; preserving video-only file %s", filepath.Base(videoFilename))
 			if ch.Config.Compress {
 				ch.CompressFile(videoFilename)
@@ -264,6 +281,9 @@ func (ch *Channel) CreateNewFile(filename string) error {
 	if err := os.MkdirAll(filepath.Dir(filename), 0777); err != nil {
 		return fmt.Errorf("mkdir all: %w", err)
 	}
+
+	ch.videoMediaBytes = 0
+	ch.audioMediaBytes = 0
 
 	videoPath := ch.videoPath(filename)
 	file, err := os.OpenFile(videoPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
