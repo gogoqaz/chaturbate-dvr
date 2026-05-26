@@ -71,8 +71,8 @@ func (ch *Channel) Cleanup() error {
 	}
 
 	if ch.HasSeparateAudio {
-		videoHasMedia := ch.videoMediaBytes > 0
-		audioHasMedia := ch.audioMediaBytes > 0
+		videoHasMedia := hasTrackMedia(videoInfo, ch.videoMediaBytes, len(ch.InitSegment))
+		audioHasMedia := hasTrackMedia(audioInfo, ch.audioMediaBytes, len(ch.AudioInitSegment))
 		if !videoHasMedia && videoInfo != nil {
 			if err := os.Remove(videoFilename); err != nil {
 				return fmt.Errorf("remove init-only video file: %w", err)
@@ -144,6 +144,16 @@ func (ch *Channel) Cleanup() error {
 	}
 
 	return nil
+}
+
+func hasTrackMedia(fileInfo os.FileInfo, trackedMediaBytes, initBytes int) bool {
+	if trackedMediaBytes > 0 {
+		return true
+	}
+	if fileInfo == nil {
+		return false
+	}
+	return fileInfo.Size() > int64(initBytes)
 }
 
 // muxOutputLooksValid returns true if the muxed MP4 appears to contain most

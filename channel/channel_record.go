@@ -225,12 +225,12 @@ func (ch *Channel) HandleSegment(b []byte, duration float64) error {
 	}
 
 	n, err := ch.File.Write(b)
+	ch.videoMediaBytes += n
 	if err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 
 	ch.Filesize += n
-	ch.videoMediaBytes += n
 	ch.Duration += duration
 	ch.Info("duration: %s, filesize: %s", internal.FormatDuration(ch.Duration), internal.FormatFilesize(ch.Filesize))
 
@@ -283,9 +283,9 @@ func (ch *Channel) HandleAudioSegment(b []byte, _ float64) error {
 	}
 
 	n, err := ch.AudioFile.Write(b)
+	ch.audioMediaBytes += n
 	if err != nil {
 		return fmt.Errorf("write audio file: %w", err)
 	}
-	ch.audioMediaBytes += n
 	return nil
 }

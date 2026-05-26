@@ -223,6 +223,38 @@ func TestCleanupDropsInitOnlySeparateTrackFiles(t *testing.T) {
 	}
 }
 
+func TestCleanupPreservesUncountedPartialMediaBytes(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	base := filepath.Join(dir, "recording")
+	audioPath := base + ".audio.mp4"
+	audioInit := []byte("audio-init")
+	audioFile, err := os.OpenFile(audioPath, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open audio file: %v", err)
+	}
+	if _, err := audioFile.Write(append([]byte{}, audioInit...)); err != nil {
+		t.Fatalf("write audio init: %v", err)
+	}
+	if _, err := audioFile.Write([]byte("partial-media")); err != nil {
+		t.Fatalf("write audio media: %v", err)
+	}
+
+	ch := New(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	ch.HasSeparateAudio = true
+	ch.CurrentFilename = base
+	ch.AudioInitSegment = audioInit
+	ch.AudioFile = audioFile
+
+	if err := ch.Cleanup(); err != nil {
+		t.Fatalf("Cleanup() error = %v", err)
+	}
+	if _, err := os.Stat(audioPath); err != nil {
+		t.Fatalf("audio file with uncounted media bytes should be preserved, stat err = %v", err)
+	}
+}
+
 func TestCreateNewFileKeepsLegacyHLSAsTS(t *testing.T) {
 	t.Parallel()
 
