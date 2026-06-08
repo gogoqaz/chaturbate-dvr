@@ -29,6 +29,7 @@ type ChannelConfig struct {
 func (c *ChannelConfig) Sanitize() {
 	c.Username = regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(c.Username, "")
 	c.Username = strings.TrimSpace(c.Username)
+	c.Username = strings.ToLower(c.Username)
 }
 
 // ChannelInfo represents the information about a channel,
