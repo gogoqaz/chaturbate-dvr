@@ -73,11 +73,19 @@ func (m *Manager) LoadConfig() error {
 	if err := json.Unmarshal(b, &config); err != nil {
 		return fmt.Errorf("unmarshal: %w", err)
 	}
+	config, err = prepareLoadedConfigs(config)
+	if err != nil {
+		return err
+	}
+	for _, conf := range config {
+		if _, exists := m.Channels.Load(conf.Username); exists {
+			return fmt.Errorf("duplicate username after sanitize: %q", conf.Username)
+		}
+	}
 
 	pausedSeq := 0
 	seq := 0
 	for _, conf := range config {
-		conf.Sanitize()
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
 
@@ -93,6 +101,24 @@ func (m *Manager) LoadConfig() error {
 		seq++
 	}
 	return nil
+}
+
+func prepareLoadedConfigs(configs []*entity.ChannelConfig) ([]*entity.ChannelConfig, error) {
+	seen := make(map[string]struct{}, len(configs))
+	for _, conf := range configs {
+		if conf == nil {
+			return nil, fmt.Errorf("empty channel config")
+		}
+		conf.Sanitize()
+		if conf.Username == "" {
+			return nil, fmt.Errorf("empty username after sanitize")
+		}
+		if _, ok := seen[conf.Username]; ok {
+			return nil, fmt.Errorf("duplicate username after sanitize: %q", conf.Username)
+		}
+		seen[conf.Username] = struct{}{}
+	}
+	return configs, nil
 }
 
 // CreateChannel starts monitoring an M3U8 stream
