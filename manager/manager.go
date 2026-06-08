@@ -77,6 +77,7 @@ func (m *Manager) LoadConfig() error {
 	pausedSeq := 0
 	seq := 0
 	for _, conf := range config {
+		conf.Sanitize()
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
 
