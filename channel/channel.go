@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/teacat/chaturbate-dvr/chaturbate"
@@ -40,6 +41,7 @@ type Channel struct {
 	switchRequested  bool // set by HandleSegment, consumed by OnPollComplete
 	videoMediaBytes  int
 	audioMediaBytes  int
+	compressing      atomic.Int32
 }
 
 // New creates a new channel instance with the given manager and configuration.
@@ -109,20 +111,45 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		streamedAt = time.Unix(ch.StreamedAt, 0).Format("2006-01-02 15:04 AM")
 	}
 	return &entity.ChannelInfo{
-		IsOnline:     ch.IsOnline,
-		IsPaused:     ch.Config.IsPaused,
-		RoomStatus:   ch.RoomStatus,
-		Username:     ch.Config.Username,
-		MaxDuration:  internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
-		MaxFilesize:  internal.FormatFilesize(ch.Config.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
-		StreamedAt:   streamedAt,
-		CreatedAt:    ch.Config.CreatedAt,
-		Duration:     internal.FormatDuration(ch.Duration),
-		Filesize:     internal.FormatFilesize(ch.Filesize),
-		Filename:     filename,
-		Logs:         ch.Logs,
-		GlobalConfig: server.Config,
+		IsOnline:      ch.IsOnline,
+		IsPaused:      ch.Config.IsPaused,
+		IsCompressing: ch.IsCompressing(),
+		RoomStatus:    ch.RoomStatus,
+		Username:      ch.Config.Username,
+		MaxDuration:   internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
+		MaxFilesize:   internal.FormatFilesize(ch.Config.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
+		StreamedAt:    streamedAt,
+		CreatedAt:     ch.Config.CreatedAt,
+		Duration:      internal.FormatDuration(ch.Duration),
+		Filesize:      internal.FormatFilesize(ch.Filesize),
+		Filename:      filename,
+		Logs:          ch.Logs,
+		GlobalConfig:  server.Config,
 	}
+}
+
+// BeginCompression marks a background compression job as active.
+func (ch *Channel) BeginCompression() {
+	ch.compressing.Add(1)
+	ch.Update()
+}
+
+// EndCompression marks a background compression job as finished.
+func (ch *Channel) EndCompression() {
+	if ch.compressing.Add(-1) < 0 {
+		ch.compressing.Store(0)
+	}
+	ch.Update()
+}
+
+// IsCompressing reports whether any background compression job is active.
+func (ch *Channel) IsCompressing() bool {
+	return ch.compressing.Load() > 0
+}
+
+// HasActiveWork reports whether this channel is recording or compressing.
+func (ch *Channel) HasActiveWork() bool {
+	return (ch.IsOnline && !ch.Config.IsPaused) || ch.IsCompressing()
 }
 
 // Pause pauses the channel and cancels the context.

@@ -222,6 +222,19 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	return channels
 }
 
+// HasActiveWork reports whether any channel is currently recording or compressing.
+func (m *Manager) HasActiveWork() bool {
+	active := false
+	m.Channels.Range(func(key, value any) bool {
+		if value.(*channel.Channel).HasActiveWork() {
+			active = true
+			return false
+		}
+		return true
+	})
+	return active
+}
+
 // Publish sends an SSE event to the specified channel.
 func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 	switch evt {

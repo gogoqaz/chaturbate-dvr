@@ -139,6 +139,7 @@ func start(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("new manager: %w", err)
 	}
+	installShutdownGuard(server.Manager)
 
 	// init web interface if username is not provided
 	if server.Config.Username == "" {
