@@ -27,6 +27,7 @@ func (noopManager) Publish(string, *entity.ChannelInfo)             {}
 func (noopManager) Subscriber(http.ResponseWriter, *http.Request)   {}
 func (noopManager) LoadConfig() error                               { return nil }
 func (noopManager) SaveConfig() error                               { return nil }
+func (noopManager) HasActiveWork() bool                             { return false }
 
 func init() {
 	server.Manager = noopManager{}
@@ -87,6 +88,19 @@ func TestCreateNewFileWritesInitSegmentForRotatedFMP4Files(t *testing.T) {
 	}
 	if string(got) != string(initSegment) {
 		t.Fatalf("mp4 contents = %q, want %q", string(got), string(initSegment))
+	}
+}
+
+func TestExportInfoReportsCompressing(t *testing.T) {
+	t.Parallel()
+
+	ch := New(&entity.ChannelConfig{Username: "alice"})
+	ch.BeginCompression()
+
+	info := ch.ExportInfo()
+
+	if !info.IsCompressing {
+		t.Fatal("ExportInfo().IsCompressing = false, want true while compression is active")
 	}
 }
 

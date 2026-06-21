@@ -37,3 +37,22 @@ select {
 /* Channel item selected state */
 .channel-item.selected { @apply bg-zinc-100; }
 .dark .channel-item.selected { @apply bg-zinc-700; }
+
+/* Loading states */
+.loading-spinner {
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  animation: loading-spin 0.75s linear infinite;
+}
+
+.manual-loading.htmx-indicator {
+  opacity: 1;
+  visibility: visible;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

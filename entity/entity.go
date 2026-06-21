@@ -35,19 +35,20 @@ func (c *ChannelConfig) Sanitize() {
 // ChannelInfo represents the information about a channel,
 // mostly used for the template rendering.
 type ChannelInfo struct {
-	IsOnline     bool
-	IsPaused     bool
-	RoomStatus   string // public, private, group, away, offline, hidden
-	Username     string
-	Duration     string
-	Filesize     string
-	Filename     string
-	StreamedAt   string
-	MaxDuration  string
-	MaxFilesize  string
-	CreatedAt    int64
-	Logs         []string
-	GlobalConfig *Config // for nested template to access $.Config
+	IsOnline      bool
+	IsPaused      bool
+	IsCompressing bool
+	RoomStatus    string // public, private, group, away, offline, hidden
+	Username      string
+	Duration      string
+	Filesize      string
+	Filename      string
+	StreamedAt    string
+	MaxDuration   string
+	MaxFilesize   string
+	CreatedAt     int64
+	Logs          []string
+	GlobalConfig  *Config // for nested template to access $.Config
 }
 
 // Config holds the configuration for the application.

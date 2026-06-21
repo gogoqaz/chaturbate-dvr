@@ -25,7 +25,11 @@
         </script>
     </head>
 
-    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-dvh font-sans overflow-hidden" hx-ext="sse">
+    <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 h-dvh font-sans overflow-hidden" hx-ext="sse" hx-indicator="#global-loading">
+        <div id="global-loading" class="htmx-indicator pointer-events-none fixed right-4 top-4 z-50 flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white/95 dark:bg-zinc-800/95 px-3 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-300 shadow-lg">
+            <span class="loading-spinner w-3.5 h-3.5"></span>
+            <span id="global-loading-label">Loading</span>
+        </div>
         <div class="flex h-dvh">
 
             <!-- Sidebar -->
@@ -63,10 +67,10 @@
                             data-priority="{{ if and .IsOnline (not .IsPaused) }}0{{ else if .IsPaused }}{{ if .IsOnline }}2{{ else }}3{{ end }}{{ else }}1{{ end }}"
                             aria-current="false"
                             onclick="selectChannel('{{ .Username }}')">
-                        <span class="w-2 h-2 rounded-full shrink-0 {{ if and .IsOnline (not .IsPaused) }}bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]{{ else if .IsPaused }}bg-red-500{{ else }}bg-zinc-300{{ end }}"
+                        <span class="w-2 h-2 rounded-full shrink-0 {{ if and .IsOnline (not .IsPaused) }}bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.4)]{{ else if .IsPaused }}bg-red-500{{ else if .IsCompressing }}bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.45)]{{ else }}bg-zinc-300{{ end }}"
                               data-status-dot="{{ .Username }}"></span>
                         <span class="text-sm font-semibold flex-1 truncate">{{ .Username }}</span>
-                        <span class="text-[10px] text-zinc-400 uppercase" data-status-text="{{ .Username }}">{{ if and .IsOnline (not .IsPaused) }}Rec{{ else if .RoomStatus }}{{ .RoomStatus }}{{ end }}</span>
+                        <span class="text-[10px] text-zinc-400 uppercase" data-status-text="{{ .Username }}">{{ if and .IsOnline (not .IsPaused) }}Rec{{ else if .IsCompressing }}Compress{{ else if .RoomStatus }}{{ .RoomStatus }}{{ else if not .IsPaused }}Checking{{ end }}</span>
                     </button>
                     {{ end }}
                     {{ if not .Channels }}
@@ -318,6 +322,19 @@
                 }
             }
 
+            // === Loading indicator and close guard ===
+            function setGlobalLoading(isLoading, label) {
+                var el = document.getElementById('global-loading');
+                var labelEl = document.getElementById('global-loading-label');
+                if (!el) return;
+                if (labelEl && label) labelEl.textContent = label;
+                el.classList.toggle('manual-loading', isLoading);
+            }
+
+            function hasActiveWork() {
+                return Boolean(document.querySelector('[data-status="recording"], [data-compressing="true"]'));
+            }
+
             // === Sidebar order (mirrors manager.ChannelInfo sort) ===
             function channelPriority(status, isOnline) {
                 if (status === 'recording') return 0;
@@ -339,7 +356,7 @@
             }
 
             // === Sidebar dot sync ===
-            function updateSidebarDot(username, status, isOnline, roomStatus) {
+            function updateSidebarDot(username, status, isOnline, roomStatus, isCompressing) {
                 var dot = document.querySelector('[data-status-dot="' + username + '"]');
                 if (!dot) return;
                 dot.className = 'w-2 h-2 rounded-full shrink-0';
@@ -347,6 +364,8 @@
                     dot.classList.add('bg-green-500', 'shadow-[0_0_6px_rgba(34,197,94,0.4)]');
                 } else if (status === 'paused') {
                     dot.classList.add('bg-red-500');
+                } else if (isCompressing) {
+                    dot.classList.add('bg-amber-500', 'shadow-[0_0_6px_rgba(245,158,11,0.45)]');
                 } else {
                     dot.classList.add('bg-zinc-300');
                 }
@@ -354,13 +373,28 @@
                 if (textEl) {
                     if (status === 'recording') {
                         textEl.textContent = 'Rec';
+                    } else if (isCompressing) {
+                        textEl.textContent = 'Compress';
                     } else {
-                        textEl.textContent = roomStatus || '';
+                        textEl.textContent = roomStatus || (status === 'paused' ? '' : 'Checking');
                     }
                 }
             }
 
             // === SSE event handlers ===
+            document.body.addEventListener("htmx:beforeRequest", function() {
+                setGlobalLoading(true, 'Loading');
+            });
+            document.body.addEventListener("htmx:afterRequest", function() {
+                setGlobalLoading(false);
+            });
+            document.body.addEventListener("htmx:sendError", function() {
+                setGlobalLoading(false);
+            });
+            document.body.addEventListener("htmx:responseError", function() {
+                setGlobalLoading(false);
+            });
+
             document.body.addEventListener("htmx:sseBeforeMessage", function(e) {
                 var sseId = e.detail.elt.getAttribute('sse-swap');
                 if (sseId && sseId.endsWith("-log")) {
@@ -387,7 +421,8 @@
                     if (statusEl) {
                         var status = statusEl.dataset.status;
                         var isOnline = statusEl.dataset.online === 'true';
-                        updateSidebarDot(username, status, isOnline, statusEl.dataset.roomStatus || '');
+                        var isCompressing = statusEl.dataset.compressing === 'true';
+                        updateSidebarDot(username, status, isOnline, statusEl.dataset.roomStatus || '', isCompressing);
                         var item = document.querySelector('.channel-item[data-username="' + username + '"]');
                         if (item) {
                             var newPriority = String(channelPriority(status, isOnline));
@@ -399,6 +434,21 @@
                     }
                     updateRecordingCount();
                 }
+            });
+
+            window.addEventListener('beforeunload', function(e) {
+                if (!hasActiveWork()) return;
+                e.preventDefault();
+                e.returnValue = '';
+            });
+
+            document.addEventListener('submit', function(e) {
+                if (e.defaultPrevented) return;
+                setGlobalLoading(true, 'Loading');
+            });
+
+            window.addEventListener('pageshow', function() {
+                setGlobalLoading(false);
             });
 
             // === Dark mode ===

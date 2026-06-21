@@ -1,5 +1,5 @@
 {{ define "channel_info" }}
-<div data-status="{{ if and .IsOnline (not .IsPaused) }}recording{{ else if .IsPaused }}paused{{ else }}offline{{ end }}" data-online="{{ if .IsOnline }}true{{ else }}false{{ end }}" data-room-status="{{ .RoomStatus }}">
+<div data-status="{{ if and .IsOnline (not .IsPaused) }}recording{{ else if .IsPaused }}paused{{ else }}offline{{ end }}" data-online="{{ if .IsOnline }}true{{ else }}false{{ end }}" data-room-status="{{ .RoomStatus }}" data-compressing="{{ if .IsCompressing }}true{{ else }}false{{ end }}">
 
   <!-- Back to channel list (mobile only) -->
   <button type="button" onclick="history.back()" class="md:hidden inline-flex items-center gap-1.5 mb-3 text-xs font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">
@@ -18,15 +18,22 @@
   </div>
 
   <!-- Header -->
-  <div class="flex items-center justify-between">
+  <div class="flex items-center justify-between gap-3">
     <div class="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate">{{ .Username }}</div>
+    <div class="flex items-center gap-1.5 shrink-0">
     {{ if and .IsOnline (not .IsPaused) }}
     <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 uppercase">Recording</span>
     {{ else if .IsPaused }}
     <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full bg-red-50 dark:bg-red-900/30 text-red-500 dark:text-red-400 uppercase">{{ if .RoomStatus }}{{ .RoomStatus }}{{ else }}Paused{{ end }}</span>
+    {{ else if not .RoomStatus }}
+    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 uppercase"><span class="loading-spinner w-2.5 h-2.5"></span>Checking</span>
     {{ else }}
     <span class="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold rounded-full {{ if eq .RoomStatus "private" }}bg-purple-50 dark:bg-purple-900/30 text-purple-500{{ else if eq .RoomStatus "away" }}bg-amber-50 dark:bg-amber-900/30 text-amber-500{{ else }}bg-zinc-100 dark:bg-zinc-700 text-zinc-400{{ end }} uppercase">{{ if .RoomStatus }}{{ .RoomStatus }}{{ else }}Offline{{ end }}</span>
     {{ end }}
+    {{ if .IsCompressing }}
+    <span class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 uppercase"><span class="loading-spinner w-2.5 h-2.5"></span>Compressing</span>
+    {{ end }}
+    </div>
   </div>
   <!-- / Header -->
 
