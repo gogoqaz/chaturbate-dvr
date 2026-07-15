@@ -222,7 +222,17 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	return channels
 }
 
-// Publish sends an SSE event to the specified channel.
+// Publish sends an SSE event to subscribers of the "updates" stream.
+//
+// It uses TryPublish (non-blocking) rather than Publish: SSE carries only
+// ephemeral UI updates, so when the stream buffer is full the event is dropped
+// and the next successful publish re-syncs the client. This decoupling is
+// critical because Publish runs on the recording hot path
+// (Channel.Publisher -> Info/Update -> HandleSegment). A blocking publish there
+// lets a single slow or stalled SSE client (e.g. a browser tab suspended when a
+// laptop lid closes while the TCP connection stays half-open) apply backpressure
+// all the way back into the recording loop, stalling every channel until the
+// client disconnects. See issue #34.
 func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 	switch evt {
 	case entity.EventUpdate:
@@ -231,12 +241,12 @@ func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 			fmt.Println("Error executing template:", err)
 			return
 		}
-		m.SSE.Publish("updates", &sse.Event{
+		m.SSE.TryPublish("updates", &sse.Event{
 			Event: []byte(info.Username + "-info"),
 			Data:  b.Bytes(),
 		})
 	case entity.EventLog:
-		m.SSE.Publish("updates", &sse.Event{
+		m.SSE.TryPublish("updates", &sse.Event{
 			Event: []byte(info.Username + "-log"),
 			Data:  []byte(strings.Join(info.Logs, "\n")),
 		})
