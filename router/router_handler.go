@@ -3,6 +3,7 @@ package router
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,8 +45,9 @@ func CreateChannel(c *gin.Context) {
 		return
 	}
 
+	var focus string
 	for _, username := range strings.Split(req.Username, ",") {
-		server.Manager.CreateChannel(&entity.ChannelConfig{
+		conf := &entity.ChannelConfig{
 			IsPaused:    false,
 			Username:    username,
 			Framerate:   req.Framerate,
@@ -55,7 +57,25 @@ func CreateChannel(c *gin.Context) {
 			MaxFilesize: req.MaxFilesize,
 			Compress:    req.Compress,
 			CreatedAt:   time.Now().Unix(),
-		}, true)
+		}
+		conf.Sanitize()
+		if conf.Username == "" {
+			continue
+		}
+		// Focus the first valid channel from the submitted list once the page reloads.
+		if focus == "" {
+			focus = conf.Username
+		}
+		// If the channel already exists, resume it (when paused) instead of
+		// silently doing nothing, so re-adding a channel visibly starts recording.
+		if err := server.Manager.CreateChannel(conf, true); err != nil {
+			server.Manager.ResumeChannel(conf.Username)
+		}
+	}
+
+	if focus != "" {
+		c.Redirect(http.StatusFound, "/?focus="+url.QueryEscape(focus))
+		return
 	}
 	c.Redirect(http.StatusFound, "/")
 }

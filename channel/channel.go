@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/teacat/chaturbate-dvr/chaturbate"
@@ -20,6 +21,10 @@ type Channel struct {
 	PauseCancelFunc context.CancelFunc
 	LogCh           chan string
 	UpdateCh        chan bool
+
+	// pauseMu guards the IsPaused state transition so concurrent resumes can't
+	// both start a Monitor goroutine. See ResumeIfPaused.
+	pauseMu sync.Mutex
 
 	IsOnline   bool
 	RoomStatus string // public, private, group, away, offline
@@ -131,7 +136,10 @@ func (ch *Channel) Pause() {
 	// `context.Canceled` → `ch.Monitor()` → `onRetry` → `ch.UpdateOnlineStatus(false)`.
 	ch.CancelFunc()
 
+	ch.pauseMu.Lock()
 	ch.Config.IsPaused = true
+	ch.pauseMu.Unlock()
+
 	ch.Update()
 	ch.Info("channel paused")
 
@@ -152,9 +160,32 @@ func (ch *Channel) Stop() {
 // `startSeq` is used to prevent all channels from starting at the same time, preventing TooManyRequests errors.
 // It's only be used when program starting and trying to resume all channels at once.
 func (ch *Channel) Resume(startSeq int) {
-	ch.PauseCancelFunc()
+	ch.pauseMu.Lock()
 	ch.Config.IsPaused = false
+	ch.pauseMu.Unlock()
 
+	ch.resume(startSeq)
+}
+
+// ResumeIfPaused resumes the channel only when it is currently paused, flipping
+// the paused state atomically so that concurrent callers cannot both start a
+// Monitor goroutine. It reports whether this call performed the resume.
+func (ch *Channel) ResumeIfPaused(startSeq int) bool {
+	ch.pauseMu.Lock()
+	if !ch.Config.IsPaused {
+		ch.pauseMu.Unlock()
+		return false
+	}
+	ch.Config.IsPaused = false
+	ch.pauseMu.Unlock()
+
+	ch.resume(startSeq)
+	return true
+}
+
+// resume performs the actual resume work once the paused state has been cleared.
+func (ch *Channel) resume(startSeq int) {
+	ch.PauseCancelFunc()
 	ch.Update()
 	ch.Info("channel resumed")
 

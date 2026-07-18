@@ -411,9 +411,16 @@
             document.addEventListener("DOMContentLoaded", function() {
                 updateRecordingCount();
 
-                // First load always lands on the channel list — skip the mobile flip into detail view.
+                // A ?focus=<username> param (set after adding a channel) wins so the
+                // newly added — or re-added existing — channel is shown right away.
+                var focus = new URLSearchParams(window.location.search).get('focus');
                 var saved = sessionStorage.getItem('selectedChannel');
-                if (saved && document.querySelector('[data-channel="' + saved + '"]')) {
+                if (focus && document.querySelector('[data-channel="' + CSS.escape(focus) + '"]')) {
+                    // Strip ?focus from the URL so a later refresh doesn't re-force it.
+                    history.replaceState(history.state, '', window.location.pathname);
+                    selectChannel(focus);
+                } else if (saved && document.querySelector('[data-channel="' + CSS.escape(saved) + '"]')) {
+                    // First load always lands on the channel list — skip the mobile flip into detail view.
                     selectChannel(saved, true);
                 } else {
                     sessionStorage.removeItem('selectedChannel');
