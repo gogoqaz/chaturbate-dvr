@@ -124,13 +124,13 @@ func prepareLoadedConfigs(configs []*entity.ChannelConfig) ([]*entity.ChannelCon
 // CreateChannel starts monitoring an M3U8 stream
 func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) error {
 	conf.Sanitize()
-	ch := channel.New(conf)
 
-	// prevent duplicate channels
-	_, ok := m.Channels.Load(conf.Username)
-	if ok {
+	// Prevent duplicate channels. Check before channel.New so a duplicate does
+	// not leak the Publisher goroutine that New starts.
+	if _, ok := m.Channels.Load(conf.Username); ok {
 		return fmt.Errorf("channel %s already exists", conf.Username)
 	}
+	ch := channel.New(conf)
 	m.Channels.Store(conf.Username, ch)
 
 	go ch.Resume(0)
@@ -172,13 +172,21 @@ func (m *Manager) PauseChannel(username string) error {
 	return nil
 }
 
-// ResumeChannel resumes the channel.
+// ResumeChannel resumes the channel if it is paused.
+//
+// Resuming an already-active channel is a no-op: calling Resume on a running
+// channel would spawn a second Monitor goroutine. This guard makes ResumeChannel
+// safe to call when re-adding a channel that already exists.
 func (m *Manager) ResumeChannel(username string) error {
 	thing, ok := m.Channels.Load(username)
 	if !ok {
 		return nil
 	}
-	thing.(*channel.Channel).Resume(0)
+	ch := thing.(*channel.Channel)
+	if !ch.Config.IsPaused {
+		return nil
+	}
+	ch.Resume(0)
 
 	if err := m.SaveConfig(); err != nil {
 		return fmt.Errorf("save config: %w", err)
