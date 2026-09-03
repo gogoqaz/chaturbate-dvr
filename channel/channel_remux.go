@@ -26,8 +26,8 @@ const remuxQuietPeriod = 2 * time.Minute
 // cannot walk an entire disk.
 const remuxScanDepth = 6
 
-// Substituted into the very template GenerateFilename renders, then replaced
-// by `*`, so any recording the pattern can produce is recognised.
+// Starting points for the values substituted into the very template
+// GenerateFilename renders, then replaced by `*` to build the matcher.
 const (
 	wildcardSentinel    = "xWiLdCaRdx"
 	wildcardSentinelSeq = 987654321
@@ -96,6 +96,11 @@ func (ch *Channel) remuxPair(base string) (bool, error) {
 		return false, nil
 	}
 
+	// The pair may have been picked up by a recording that started since the walk.
+	if ok, _ := orphanPairReady(base, ch.currentFilename(), time.Now().Add(-remuxQuietPeriod)); !ok {
+		return false, nil
+	}
+
 	ch.Info("remux: merging %s + %s", filepath.Base(videoPath), filepath.Base(audioPath))
 	if err := ch.FinalizeMux(videoPath, audioPath, base+".mp4", videoInfo, audioInfo); err != nil {
 		if errors.Is(err, ErrMuxRejected) || errors.Is(err, ErrMuxBusy) {
@@ -139,7 +144,7 @@ func (ch *Channel) findOrphanPairs() ([]string, error) {
 		if !ch.ownsRecording(base, matchers) {
 			return nil
 		}
-		if ok, reason := orphanPairReady(base, ch.CurrentFilename, cutoff); !ok {
+		if ok, reason := orphanPairReady(base, ch.currentFilename(), cutoff); !ok {
 			if reason != "" {
 				ch.Info("remux: skipping %s (%s)", filepath.Base(base), reason)
 			}
@@ -172,8 +177,13 @@ func orphanPairReady(base, currentFilename string, cutoff time.Time) (bool, stri
 	if videoInfo.ModTime().After(cutoff) || audioInfo.ModTime().After(cutoff) {
 		return false, "still being written"
 	}
-	for _, ext := range []string{".mp4", ".mkv"} {
-		if _, err := os.Stat(base + ext); err == nil {
+	if _, err := os.Stat(base + ".mkv"); err == nil {
+		return false, "merged file already exists"
+	}
+	// A .mp4 left next to its sidecars is a merge that died before it could
+	// delete them, so retry it unless the output actually looks complete.
+	if _, err := os.Stat(base + ".mp4"); err == nil {
+		if ok, _ := muxOutputLooksValid(base+".mp4", videoInfo, audioInfo); ok {
 			return false, "merged file already exists"
 		}
 	}
@@ -199,28 +209,60 @@ func (ch *Channel) wildcardPatterns() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("filename pattern error: %w", err)
 	}
+	text, seq := uniqueSentinels(ch.Config.Pattern + ch.Config.Username)
 
 	patterns := make([]string, 0, 2)
-	for _, sequence := range []int{0, wildcardSentinelSeq} {
+	for _, sequence := range []int{0, seq} {
 		var buf bytes.Buffer
 		if err := tpl.Execute(&buf, &Pattern{
 			Username: ch.Config.Username,
 			Sequence: sequence,
-			Year:     wildcardSentinel,
-			Month:    wildcardSentinel,
-			Day:      wildcardSentinel,
-			Hour:     wildcardSentinel,
-			Minute:   wildcardSentinel,
-			Second:   wildcardSentinel,
+			Year:     text,
+			Month:    text,
+			Day:      text,
+			Hour:     text,
+			Minute:   text,
+			Second:   text,
 		}); err != nil {
 			return nil, fmt.Errorf("template execution error: %w", err)
 		}
 		rendered := filepath.ToSlash(filepath.Clean(buf.String()))
-		rendered = strings.ReplaceAll(rendered, wildcardSentinel, "*")
-		rendered = strings.ReplaceAll(rendered, strconv.Itoa(wildcardSentinelSeq), "*")
+		rendered = strings.ReplaceAll(rendered, text, "*")
+		rendered = strings.ReplaceAll(rendered, strconv.Itoa(seq), "*")
 		patterns = append(patterns, rendered)
 	}
 	return patterns, nil
+}
+
+// uniqueSentinels picks values absent from the pattern's own literals, so the
+// substitution cannot punch a wildcard into a username or a fixed segment.
+func uniqueSentinels(literals string) (string, int) {
+	text := wildcardSentinel
+	for strings.Contains(literals, text) {
+		text += "x"
+	}
+	seq := wildcardSentinelSeq
+	for strings.Contains(literals, strconv.Itoa(seq)) {
+		seq++
+	}
+	return text, seq
+}
+
+// PatternIsChannelSpecific reports whether the filename encodes the username,
+// the only evidence a scan has that a leftover recording belongs to a channel.
+func (ch *Channel) PatternIsChannelSpecific() bool {
+	tpl, err := template.New("filename").Parse(ch.Config.Pattern)
+	if err != nil {
+		return false
+	}
+	render := func(username string) (string, error) {
+		var buf bytes.Buffer
+		err := tpl.Execute(&buf, &Pattern{Username: username})
+		return buf.String(), err
+	}
+	a, errA := render("aaaaaaaa")
+	b, errB := render("bbbbbbbb")
+	return errA == nil && errB == nil && a != b
 }
 
 // patternRoot returns the deepest directory of the pattern holding no

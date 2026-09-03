@@ -286,6 +286,9 @@ func (ch *Channel) FinalizeMux(videoPath, audioPath, outputPath string, videoInf
 	if err := ch.MuxAV(videoPath, audioPath, outputPath); err != nil {
 		ch.Info("mux: ffmpeg mux failed, trying native fallback: %s", err.Error())
 		if nativeErr := ch.MuxAVNative(videoPath, audioPath, outputPath); nativeErr != nil {
+			// A half-written output would otherwise look like a finished merge
+			// and stop Remux from ever retrying this pair.
+			_ = os.Remove(outputPath)
 			ch.Error("mux: keeping %s and %s; use Remux to retry the merge", filepath.Base(videoPath), filepath.Base(audioPath))
 			return fmt.Errorf("mux audio/video: %w", nativeErr)
 		}

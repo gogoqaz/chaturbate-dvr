@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/teacat/chaturbate-dvr/channel"
 	"github.com/teacat/chaturbate-dvr/entity"
 )
 
@@ -65,5 +66,32 @@ func TestLoadConfigRejectsDuplicateSanitizedUsernames(t *testing.T) {
 	}
 	if _, ok := m.Channels.Load("alice"); ok {
 		t.Fatal("duplicate config should fail before storing channels")
+	}
+}
+
+func TestMayRemuxRejectsAnAmbiguousPatternSharedByChannels(t *testing.T) {
+	const ambiguous = "videos/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}"
+
+	m, err := New()
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	alice := channel.New(&entity.ChannelConfig{Username: "alice", Pattern: ambiguous})
+	m.Channels.Store("alice", alice)
+
+	// The only channel on disk owns whatever it finds.
+	if !m.mayRemux(alice) {
+		t.Fatal("a lone channel must still be allowed to remux")
+	}
+
+	m.Channels.Store("bob", channel.New(&entity.ChannelConfig{Username: "bob", Pattern: ambiguous}))
+	if m.mayRemux(alice) {
+		t.Fatal("channels sharing a username-less pattern must not claim each other's files")
+	}
+
+	specific := channel.New(&entity.ChannelConfig{Username: "carol", Pattern: "videos/{{.Username}}_{{.Year}}"})
+	m.Channels.Store("carol", specific)
+	if !m.mayRemux(specific) {
+		t.Fatal("a pattern carrying the username is unambiguous")
 	}
 }

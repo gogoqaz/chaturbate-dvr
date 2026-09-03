@@ -34,7 +34,7 @@ func (ch *Channel) NextFile() error {
 	if err != nil {
 		return err
 	}
-	ch.CurrentFilename = filename
+	ch.setCurrentFilename(filename)
 	if err := ch.CreateNewFile(filename); err != nil {
 		return err
 	}
@@ -49,12 +49,12 @@ func (ch *Channel) Cleanup() error {
 	if ch.File == nil && ch.AudioFile == nil {
 		return nil
 	}
-	currentFilename := ch.CurrentFilename
+	currentFilename := ch.currentFilename()
 
 	defer func() {
 		ch.File = nil
 		ch.AudioFile = nil
-		ch.CurrentFilename = ""
+		ch.setCurrentFilename("")
 		ch.Filesize = 0
 		ch.Duration = 0
 		ch.videoMediaBytes = 0

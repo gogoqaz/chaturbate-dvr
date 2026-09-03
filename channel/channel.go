@@ -31,6 +31,10 @@ type Channel struct {
 	// walking the recording directory.
 	remuxing atomic.Bool
 
+	// filenameMu guards CurrentFilename, which the recorder writes while the
+	// SSE publisher and the remux scan read it.
+	filenameMu sync.RWMutex
+
 	IsOnline   bool
 	RoomStatus string // public, private, group, away, offline
 	StreamedAt int64
@@ -106,11 +110,25 @@ func (ch *Channel) Error(format string, a ...any) {
 	log.Printf("ERROR [%s] %s", ch.Config.Username, fmt.Sprintf(format, a...))
 }
 
+// setCurrentFilename records the recording currently being written.
+func (ch *Channel) setCurrentFilename(name string) {
+	ch.filenameMu.Lock()
+	defer ch.filenameMu.Unlock()
+	ch.CurrentFilename = name
+}
+
+// currentFilename returns the recording currently being written, empty when idle.
+func (ch *Channel) currentFilename() string {
+	ch.filenameMu.RLock()
+	defer ch.filenameMu.RUnlock()
+	return ch.CurrentFilename
+}
+
 // ExportInfo exports the channel information as a ChannelInfo struct.
 func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	var filename string
-	if ch.CurrentFilename != "" && ch.HasSeparateAudio {
-		filename = ch.CurrentFilename + ".mp4"
+	if current := ch.currentFilename(); current != "" && ch.HasSeparateAudio {
+		filename = current + ".mp4"
 	} else if ch.File != nil {
 		filename = ch.File.Name()
 	}

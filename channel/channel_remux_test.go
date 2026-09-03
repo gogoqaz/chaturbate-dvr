@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +191,112 @@ func TestFinalizeMuxRefusesToMergeAnOutputAnotherMergeOwns(t *testing.T) {
 	for _, suffix := range []string{videoSidecarSuffix, audioSidecarSuffix} {
 		if _, err := os.Stat(base + suffix); err != nil {
 			t.Fatalf("sidecar %s must survive a skipped merge, stat err = %v", suffix, err)
+		}
+	}
+}
+
+func TestRemuxOrphansRetriesAnIncompleteOutput(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir) // no ffmpeg: exercises the native muxer
+
+	base := filepath.Join(dir, "alice_2025-09-03_10-00-00")
+	writeStaleSidecars(t, base,
+		buildFragmentedMP4(t, "video", 90000, []byte{0x00, 0x00, 0x00, 0x01, 0x67}),
+		buildFragmentedMP4(t, "audio", 44100, []byte{0xFF, 0xF1}))
+	// A merge that died before it could delete the sidecars.
+	writeSidecar(t, base+".mp4", []byte("truncated"))
+
+	ch := New(&entity.ChannelConfig{
+		Username: "alice",
+		Pattern:  filepath.Join(dir, defaultPattern),
+	})
+
+	merged, err := ch.RemuxOrphans()
+	if err != nil {
+		t.Fatalf("RemuxOrphans() error = %v", err)
+	}
+	if merged != 1 {
+		t.Fatalf("merged = %d, want 1", merged)
+	}
+	if _, err := mp4.ReadMP4File(base + ".mp4"); err != nil {
+		t.Fatalf("truncated output must be replaced, ReadMP4File() error = %v", err)
+	}
+}
+
+func TestFinalizeMuxRemovesAPartialOutputWhenBothMuxersFail(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir) // no ffmpeg, and the payload is not a valid fMP4
+
+	base := filepath.Join(dir, "alice_2025-09-03_10-00-00")
+	writeStaleSidecars(t, base, []byte("not-an-mp4"), []byte("not-an-mp4"))
+	output := base + ".mp4"
+	// Stand in for the partial file a crashed ffmpeg leaves behind.
+	writeSidecar(t, output, []byte("partial"))
+
+	ch := New(&entity.ChannelConfig{
+		Username: "alice",
+		Pattern:  filepath.Join(dir, defaultPattern),
+	})
+
+	videoInfo, err := os.Stat(base + videoSidecarSuffix)
+	if err != nil {
+		t.Fatalf("stat video sidecar: %v", err)
+	}
+	audioInfo, err := os.Stat(base + audioSidecarSuffix)
+	if err != nil {
+		t.Fatalf("stat audio sidecar: %v", err)
+	}
+
+	if err := ch.FinalizeMux(base+videoSidecarSuffix, base+audioSidecarSuffix, output, videoInfo, audioInfo); err == nil {
+		t.Fatal("FinalizeMux() error = nil, want a mux failure")
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("partial output must be removed, stat err = %v", err)
+	}
+}
+
+func TestWildcardPatternsKeepsSentinelLookalikesLiteral(t *testing.T) {
+	t.Parallel()
+
+	// The username carries the sequence sentinel, the pattern the text one.
+	ch := New(&entity.ChannelConfig{
+		Username: "alice987654321",
+		Pattern:  "xWiLdCaRdx/{{.Username}}_{{.Year}}",
+	})
+
+	patterns, err := ch.wildcardPatterns()
+	if err != nil {
+		t.Fatalf("wildcardPatterns() error = %v", err)
+	}
+	for _, pattern := range patterns {
+		if !strings.HasPrefix(pattern, "xWiLdCaRdx/alice987654321_") {
+			t.Fatalf("pattern = %q, want the literals preserved", pattern)
+		}
+	}
+	if ch.ownsRecording("xWiLdCaRdx/alice9876543219/2025", patterns) {
+		t.Fatal("a lookalike username must not be claimed")
+	}
+	if !ch.ownsRecording("xWiLdCaRdx/alice987654321_2025", patterns) {
+		t.Fatal("the channel's own recording must still be claimed")
+	}
+}
+
+func TestPatternIsChannelSpecific(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		pattern string
+		want    bool
+	}{
+		{defaultPattern, true},
+		{"videos/{{.Username}}/{{.Year}}", true},
+		{"videos/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}", false},
+		{"recording", false},
+	}
+	for _, tt := range tests {
+		ch := New(&entity.ChannelConfig{Username: "alice", Pattern: tt.pattern})
+		if got := ch.PatternIsChannelSpecific(); got != tt.want {
+			t.Errorf("PatternIsChannelSpecific(%q) = %v, want %v", tt.pattern, got, tt.want)
 		}
 	}
 }
