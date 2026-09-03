@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/teacat/chaturbate-dvr/chaturbate"
@@ -25,6 +26,10 @@ type Channel struct {
 	// pauseMu guards the IsPaused state transition so concurrent resumes can't
 	// both start a Monitor goroutine. See ResumeIfPaused.
 	pauseMu sync.Mutex
+
+	// remuxing keeps a second remux scan from starting while one is still
+	// walking the recording directory.
+	remuxing atomic.Bool
 
 	IsOnline   bool
 	RoomStatus string // public, private, group, away, offline

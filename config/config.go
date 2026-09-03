@@ -23,6 +23,7 @@ func New(c *cli.Context) (*entity.Config, error) {
 		Cookies:        c.String("cookies"),
 		UserAgent:      c.String("user-agent"),
 		Domain:         c.String("domain"),
+		AutoRemux:      c.Bool("auto-remux"),
 		OutputDir:      c.String("output-dir"),
 		PerModelFolder: c.Bool("per-model-folder"),
 	}, nil

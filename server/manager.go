@@ -13,6 +13,7 @@ type IManager interface {
 	StopChannel(username string) error
 	PauseChannel(username string) error
 	ResumeChannel(username string) error
+	RemuxChannel(username string) error
 	ChannelInfo() []*entity.ChannelInfo
 	Publish(name string, ch *entity.ChannelInfo)
 	Subscriber(w http.ResponseWriter, r *http.Request)

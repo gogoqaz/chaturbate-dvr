@@ -101,6 +101,14 @@ func ResumeChannel(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/")
 }
 
+// RemuxChannel merges audio/video files a previous mux left unmerged. The work
+// runs in the background, so this only acknowledges the request.
+func RemuxChannel(c *gin.Context) {
+	server.Manager.RemuxChannel(c.Param("username"))
+
+	c.Status(http.StatusNoContent)
+}
+
 // Updates handles the SSE connection for updates.
 func Updates(c *gin.Context) {
 	server.Manager.Subscriber(c.Writer, c.Request)

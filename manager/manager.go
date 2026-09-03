@@ -15,6 +15,7 @@ import (
 	"github.com/teacat/chaturbate-dvr/channel"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/router/view"
+	"github.com/teacat/chaturbate-dvr/server"
 )
 
 // Manager is responsible for managing channels and their states.
@@ -89,6 +90,8 @@ func (m *Manager) LoadConfig() error {
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
 
+		AutoRemux(ch)
+
 		if ch.Config.IsPaused {
 			ch.Info("channel was paused, waiting for resume")
 			ctx, cancel := context.WithCancel(context.Background())
@@ -138,6 +141,7 @@ func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) err
 		return fmt.Errorf("channel %s already exists", conf.Username)
 	}
 
+	AutoRemux(ch)
 	go ch.Resume(0)
 
 	if shouldSave {
@@ -196,6 +200,38 @@ func (m *Manager) ResumeChannel(username string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
+}
+
+// RemuxChannel merges leftover audio/video sidecars in the background, and
+// reports progress through the channel log.
+func (m *Manager) RemuxChannel(username string) error {
+	thing, ok := m.Channels.Load(username)
+	if !ok {
+		return nil
+	}
+	go remux(thing.(*channel.Channel), true)
+	return nil
+}
+
+// AutoRemux repairs recordings orphaned by a failed merge or by a crash
+// mid-stream, unless --auto-remux is off.
+func AutoRemux(ch *channel.Channel) {
+	if server.Config == nil || !server.Config.AutoRemux {
+		return
+	}
+	go remux(ch, false)
+}
+
+func remux(ch *channel.Channel, announceEmpty bool) {
+	var err error
+	if announceEmpty {
+		_, err = ch.RemuxOrphans()
+	} else {
+		_, err = ch.RemuxOrphansQuiet()
+	}
+	if err != nil {
+		ch.Error("remux: %s", err.Error())
+	}
 }
 
 // ChannelInfo returns a list of channel information for the web UI.

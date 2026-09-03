@@ -107,30 +107,13 @@ func (ch *Channel) Cleanup() error {
 			return nil
 		}
 
-		finalOutput := currentFilename + ".mp4"
-		if err := ch.MuxAV(videoFilename, audioFilename, finalOutput); err != nil {
-			ch.Info("mux: ffmpeg mux failed, trying native fallback: %s", err.Error())
-			if nativeErr := ch.MuxAVNative(videoFilename, audioFilename, finalOutput); nativeErr != nil {
-				return fmt.Errorf("mux audio/video: %w", nativeErr)
+		if err := ch.FinalizeMux(videoFilename, audioFilename, currentFilename+".mp4", videoInfo, audioInfo); err != nil {
+			// Not a cleanup failure: the sidecars are still on disk and
+			// Remux can retry them later.
+			if errors.Is(err, ErrMuxRejected) || errors.Is(err, ErrMuxBusy) {
+				return nil
 			}
-		}
-
-		// Sanity-check the muxed file before discarding the sidecars. If the
-		// output is missing or implausibly small, keep the sidecars so the
-		// user can recover manually (or rerun mux with external tools).
-		if ok, reason := muxOutputLooksValid(finalOutput, videoInfo, audioInfo); !ok {
-			ch.Error("mux: output looks corrupt (%s); keeping sidecars %s and %s", reason, filepath.Base(videoFilename), filepath.Base(audioFilename))
-			_ = os.Remove(finalOutput)
-			return nil
-		}
-
-		_ = os.Remove(videoFilename)
-		_ = os.Remove(audioFilename)
-
-		if ch.Config.Compress {
-			ch.CompressFile(finalOutput)
-		} else {
-			ch.MoveToOutputDir(finalOutput)
+			return err
 		}
 		return nil
 	}
