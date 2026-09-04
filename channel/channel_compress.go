@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,9 @@ const (
 )
 
 const ffmpegProbeTimeout = 5 * time.Second
+
+// compressSlot bounds how many files are being encoded at once.
+var compressSlot = make(chan struct{}, 1)
 
 // GPU encoder detection cache
 var (
@@ -184,6 +188,11 @@ func getEncoder() videoEncoder {
 // After successful compression, the original file is deleted.
 func (ch *Channel) CompressFile(srcPath string) {
 	go func() {
+		// One encode at a time: repairing a backlog would otherwise start an
+		// ffmpeg per file and thrash the machine.
+		compressSlot <- struct{}{}
+		defer func() { <-compressSlot }()
+
 		ext := filepath.Ext(srcPath)
 		mkvPath := strings.TrimSuffix(srcPath, ext) + ".mkv"
 		srcFilename := filepath.Base(srcPath)
@@ -252,6 +261,56 @@ func (ch *Channel) CompressFile(srcPath string) {
 
 		ch.MoveToOutputDir(mkvPath)
 	}()
+}
+
+// ErrMuxRejected reports that the merge produced an output that failed the
+// sanity check, so the sidecars were kept instead of the muxed file.
+var ErrMuxRejected = errors.New("muxed output rejected")
+
+// ErrMuxBusy reports that another merge is already writing the same output
+// file, so this one stepped aside.
+var ErrMuxBusy = errors.New("merge already in progress")
+
+// Claims an output path for a merge, so a rotation's Cleanup and a Remux scan
+// cannot write the same file at once.
+var inFlightMux sync.Map
+
+// FinalizeMux merges a sidecar pair, and discards the sidecars only once the
+// result looks sound, so a failed merge can always be retried by Remux.
+func (ch *Channel) FinalizeMux(videoPath, audioPath, outputPath string, videoInfo, audioInfo os.FileInfo) error {
+	if _, loaded := inFlightMux.LoadOrStore(outputPath, struct{}{}); loaded {
+		return ErrMuxBusy
+	}
+	defer inFlightMux.Delete(outputPath)
+
+	if err := ch.MuxAV(videoPath, audioPath, outputPath); err != nil {
+		ch.Info("mux: ffmpeg mux failed, trying native fallback: %s", err.Error())
+		if nativeErr := ch.MuxAVNative(videoPath, audioPath, outputPath); nativeErr != nil {
+			// A half-written output would otherwise look like a finished merge
+			// and stop Remux from ever retrying this pair.
+			_ = os.Remove(outputPath)
+			ch.Error("mux: keeping %s and %s; use Remux to retry the merge", filepath.Base(videoPath), filepath.Base(audioPath))
+			return fmt.Errorf("mux audio/video: %w", nativeErr)
+		}
+	}
+
+	// An implausibly small output means the muxer bailed out early, and the
+	// sidecars are worth more than the corrupt result.
+	if ok, reason := muxOutputLooksValid(outputPath, videoInfo, audioInfo); !ok {
+		ch.Error("mux: output looks corrupt (%s); keeping sidecars %s and %s", reason, filepath.Base(videoPath), filepath.Base(audioPath))
+		_ = os.Remove(outputPath)
+		return ErrMuxRejected
+	}
+
+	_ = os.Remove(videoPath)
+	_ = os.Remove(audioPath)
+
+	if ch.Config.Compress {
+		ch.CompressFile(outputPath)
+	} else {
+		ch.MoveToOutputDir(outputPath)
+	}
+	return nil
 }
 
 // MuxAV combines separate video and audio source files into a single MP4 container.

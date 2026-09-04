@@ -15,6 +15,7 @@ import (
 	"github.com/teacat/chaturbate-dvr/channel"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/router/view"
+	"github.com/teacat/chaturbate-dvr/server"
 )
 
 // Manager is responsible for managing channels and their states.
@@ -83,13 +84,20 @@ func (m *Manager) LoadConfig() error {
 		}
 	}
 
-	pausedSeq := 0
-	seq := 0
+	// Register every channel before any starts, so the remux ownership check
+	// sees the whole set rather than a half-populated map.
+	channels := make([]*channel.Channel, 0, len(config))
 	for _, conf := range config {
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
+		channels = append(channels, ch)
+	}
 
+	pausedSeq := 0
+	seq := 0
+	for _, ch := range channels {
 		if ch.Config.IsPaused {
+			m.autoRemux(ch, nil)
 			ch.Info("channel was paused, waiting for resume")
 			ctx, cancel := context.WithCancel(context.Background())
 			ch.PauseCancelFunc = cancel
@@ -97,7 +105,8 @@ func (m *Manager) LoadConfig() error {
 			pausedSeq++
 			continue
 		}
-		go ch.Resume(seq)
+		resumeSeq := seq
+		m.autoRemux(ch, func() { ch.Resume(resumeSeq) })
 		seq++
 	}
 	return nil
@@ -138,7 +147,7 @@ func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) err
 		return fmt.Errorf("channel %s already exists", conf.Username)
 	}
 
-	go ch.Resume(0)
+	m.autoRemux(ch, func() { ch.Resume(0) })
 
 	if shouldSave {
 		if err := m.SaveConfig(); err != nil {
@@ -196,6 +205,59 @@ func (m *Manager) ResumeChannel(username string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
+}
+
+// RemuxChannel merges leftover audio/video sidecars in the background, and
+// reports progress through the channel log.
+func (m *Manager) RemuxChannel(username string) error {
+	thing, ok := m.Channels.Load(username)
+	if !ok {
+		return nil
+	}
+	ch := thing.(*channel.Channel)
+	go func() {
+		if !m.mayRemux(ch) {
+			return
+		}
+		if _, err := ch.RemuxOrphans(); err != nil {
+			ch.Error("remux: %s", err.Error())
+		}
+	}()
+	return nil
+}
+
+// autoRemux repairs recordings orphaned by a failed merge or by a crash
+// mid-stream, then runs next. The scan must finish first: a new recording can
+// reuse the same base name, and the scan would delete the file it appends to.
+func (m *Manager) autoRemux(ch *channel.Channel, next func()) {
+	go func() {
+		if server.Config != nil && server.Config.AutoRemux && m.mayRemux(ch) {
+			if _, err := ch.RemuxOrphansQuiet(); err != nil {
+				ch.Error("remux: %s", err.Error())
+			}
+		}
+		if next != nil {
+			next()
+		}
+	}()
+}
+
+// mayRemux refuses to scan when another channel's recordings would match the
+// same filenames, because both would then claim -- and delete -- the same pair.
+func (m *Manager) mayRemux(ch *channel.Channel) bool {
+	var conflict *channel.Channel
+	m.Channels.Range(func(_, value any) bool {
+		if other := value.(*channel.Channel); ch.ConflictsWith(other) {
+			conflict = other
+			return false
+		}
+		return true
+	})
+	if conflict == nil {
+		return true
+	}
+	ch.Info("remux: skipped, %s records to filenames this pattern cannot be told apart from", conflict.Config.Username)
+	return false
 }
 
 // ChannelInfo returns a list of channel information for the web UI.
