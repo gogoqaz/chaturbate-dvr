@@ -248,21 +248,29 @@ func uniqueSentinels(literals string) (string, int) {
 	return text, seq
 }
 
-// PatternIsChannelSpecific reports whether the filename encodes the username,
-// the only evidence a scan has that a leftover recording belongs to a channel.
-func (ch *Channel) PatternIsChannelSpecific() bool {
-	tpl, err := template.New("filename").Parse(ch.Config.Pattern)
-	if err != nil {
+// ConflictsWith reports whether another channel's recordings are
+// indistinguishable from this one's, which makes claiming a leftover unsafe.
+func (ch *Channel) ConflictsWith(other *Channel) bool {
+	if ch == other {
 		return false
 	}
-	render := func(username string) (string, error) {
-		var buf bytes.Buffer
-		err := tpl.Execute(&buf, &Pattern{Username: username})
-		return buf.String(), err
+	ours, err := ch.wildcardPatterns()
+	if err != nil {
+		return true
 	}
-	a, errA := render("aaaaaaaa")
-	b, errB := render("bbbbbbbb")
-	return errA == nil && errB == nil && a != b
+	theirs, err := other.wildcardPatterns()
+	if err != nil {
+		return true
+	}
+	for _, a := range ours {
+		for _, b := range theirs {
+			// Either direction: one channel's matcher may be the broader of the two.
+			if wildcardMatch(a, b) || wildcardMatch(b, a) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // patternRoot returns the deepest directory of the pattern holding no

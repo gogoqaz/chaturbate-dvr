@@ -7,6 +7,7 @@ import (
 
 	"github.com/teacat/chaturbate-dvr/channel"
 	"github.com/teacat/chaturbate-dvr/entity"
+	"github.com/teacat/chaturbate-dvr/server"
 )
 
 func TestPrepareLoadedConfigsRejectsDuplicateSanitizedUsernames(t *testing.T) {
@@ -69,13 +70,10 @@ func TestLoadConfigRejectsDuplicateSanitizedUsernames(t *testing.T) {
 	}
 }
 
-func TestMayRemuxRejectsAnAmbiguousPatternSharedByChannels(t *testing.T) {
+func TestMayRemuxRejectsChannelsWithIndistinguishableFilenames(t *testing.T) {
 	const ambiguous = "videos/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}"
 
-	m, err := New()
-	if err != nil {
-		t.Fatalf("new manager: %v", err)
-	}
+	m := newTestManager(t)
 	alice := channel.New(&entity.ChannelConfig{Username: "alice", Pattern: ambiguous})
 	m.Channels.Store("alice", alice)
 
@@ -94,4 +92,44 @@ func TestMayRemuxRejectsAnAmbiguousPatternSharedByChannels(t *testing.T) {
 	if !m.mayRemux(specific) {
 		t.Fatal("a pattern carrying the username is unambiguous")
 	}
+}
+
+// A pattern can carry the username and still collide, so the guard compares the
+// filenames the channels actually produce rather than the shape of the pattern.
+func TestMayRemuxRejectsUsernamesThatRenderToTheSameFilenames(t *testing.T) {
+	const initialOnly = `videos/{{printf "%.1s" .Username}}_{{.Year}}`
+
+	m := newTestManager(t)
+	alice := channel.New(&entity.ChannelConfig{Username: "alice", Pattern: initialOnly})
+	m.Channels.Store("alice", alice)
+	m.Channels.Store("bob", channel.New(&entity.ChannelConfig{Username: "bob", Pattern: initialOnly}))
+
+	if !m.mayRemux(alice) {
+		t.Fatal("alice and bob render to different filenames")
+	}
+
+	m.Channels.Store("adam", channel.New(&entity.ChannelConfig{Username: "adam", Pattern: initialOnly}))
+	if m.mayRemux(alice) {
+		t.Fatal("alice and adam both render to videos/a_*, so neither may claim a leftover")
+	}
+}
+
+// The Publisher goroutine every channel starts outlives the test that made it,
+// so server.Manager is wired once for the whole binary rather than per test.
+func init() {
+	m, err := New()
+	if err != nil {
+		panic(err)
+	}
+	server.Manager = m
+}
+
+func newTestManager(t *testing.T) *Manager {
+	t.Helper()
+
+	m, err := New()
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	return m
 }

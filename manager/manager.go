@@ -242,21 +242,21 @@ func (m *Manager) autoRemux(ch *channel.Channel, next func()) {
 	}()
 }
 
-// mayRemux refuses a pattern that omits the username while other channels share
-// it, because every one of them would then claim every leftover recording.
+// mayRemux refuses to scan when another channel's recordings would match the
+// same filenames, because both would then claim -- and delete -- the same pair.
 func (m *Manager) mayRemux(ch *channel.Channel) bool {
-	if ch.PatternIsChannelSpecific() {
+	var conflict *channel.Channel
+	m.Channels.Range(func(_, value any) bool {
+		if other := value.(*channel.Channel); ch.ConflictsWith(other) {
+			conflict = other
+			return false
+		}
 		return true
-	}
-	var others int
-	m.Channels.Range(func(_, _ any) bool {
-		others++
-		return others < 2
 	})
-	if others < 2 {
+	if conflict == nil {
 		return true
 	}
-	ch.Info("remux: skipped, the filename pattern has no {{.Username}} to tell channels apart")
+	ch.Info("remux: skipped, %s records to filenames this pattern cannot be told apart from", conflict.Config.Username)
 	return false
 }
 

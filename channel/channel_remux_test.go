@@ -281,23 +281,40 @@ func TestWildcardPatternsKeepsSentinelLookalikesLiteral(t *testing.T) {
 	}
 }
 
-func TestPatternIsChannelSpecific(t *testing.T) {
+func TestConflictsWith(t *testing.T) {
 	t.Parallel()
 
+	const timeOnly = "videos/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}"
+	// Renders one character of the username, so it separates some names but not others.
+	const initialOnly = `videos/{{printf "%.1s" .Username}}_{{.Year}}`
+
 	tests := []struct {
-		pattern string
-		want    bool
+		name         string
+		aUser, aPatt string
+		bUser, bPatt string
+		want         bool
 	}{
-		{defaultPattern, true},
-		{"videos/{{.Username}}/{{.Year}}", true},
-		{"videos/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}", false},
-		{"recording", false},
+		{"distinct usernames", "alice", defaultPattern, "bob", defaultPattern, false},
+		{"prefix usernames", "ana", defaultPattern, "ana2", defaultPattern, false},
+		{"username omitted", "alice", timeOnly, "bob", timeOnly, true},
+		{"same rendered initial", "alice", initialOnly, "adam", initialOnly, true},
+		{"different rendered initial", "alice", initialOnly, "bob", initialOnly, false},
+		{"one pattern subsumes the other", "alice", "videos/{{.Username}}_{{.Year}}", "alice_2025", "videos/{{.Username}}", true},
 	}
 	for _, tt := range tests {
-		ch := New(&entity.ChannelConfig{Username: "alice", Pattern: tt.pattern})
-		if got := ch.PatternIsChannelSpecific(); got != tt.want {
-			t.Errorf("PatternIsChannelSpecific(%q) = %v, want %v", tt.pattern, got, tt.want)
+		a := New(&entity.ChannelConfig{Username: tt.aUser, Pattern: tt.aPatt})
+		b := New(&entity.ChannelConfig{Username: tt.bUser, Pattern: tt.bPatt})
+		if got := a.ConflictsWith(b); got != tt.want {
+			t.Errorf("%s: ConflictsWith() = %v, want %v", tt.name, got, tt.want)
 		}
+		if got := b.ConflictsWith(a); got != tt.want {
+			t.Errorf("%s: reversed ConflictsWith() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	alice := New(&entity.ChannelConfig{Username: "alice", Pattern: timeOnly})
+	if alice.ConflictsWith(alice) {
+		t.Error("a channel must not conflict with itself")
 	}
 }
 

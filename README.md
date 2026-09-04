@@ -258,7 +258,7 @@ _Note: output format follows the stream container: legacy HLS is saved as `.ts`,
 >
 > The DVR merges those leftovers for you: it scans for unmerged pairs whenever a channel starts (disable with `--auto-remux=false`), and the channel panel has a **Remux Leftovers** button that scans on demand. Progress is reported in the channel log.
 >
-> A scan only claims files its own channel could have written, so it matches them against `--pattern`. With more than one channel configured, a pattern that omits `{{.Username}}` cannot tell recordings apart, and the scan skips it rather than risk merging another model's files under the wrong name.
+> A scan only claims files its own channel could have written, so it matches them against `--pattern`. When two channels would produce filenames the pattern cannot tell apart -- most often because it omits `{{.Username}}` -- both scans skip, rather than risk merging another model's files under the wrong name.
 >
 > A pair is only merged once it has been untouched for a couple of minutes, so a recording in progress is never touched, and the sidecars are kept whenever the merge fails or produces an implausibly small file.
 
