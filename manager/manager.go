@@ -97,7 +97,7 @@ func (m *Manager) LoadConfig() error {
 	seq := 0
 	for _, ch := range channels {
 		if ch.Config.IsPaused {
-			m.autoRemux(ch, nil)
+			m.autoRemux(ch)
 			ch.Info("channel was paused, waiting for resume")
 			ctx, cancel := context.WithCancel(context.Background())
 			ch.PauseCancelFunc = cancel
@@ -105,8 +105,8 @@ func (m *Manager) LoadConfig() error {
 			pausedSeq++
 			continue
 		}
-		resumeSeq := seq
-		m.autoRemux(ch, func() { ch.Resume(resumeSeq) })
+		m.autoRemux(ch)
+		go ch.Resume(seq)
 		seq++
 	}
 	return nil
@@ -147,7 +147,8 @@ func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) err
 		return fmt.Errorf("channel %s already exists", conf.Username)
 	}
 
-	m.autoRemux(ch, func() { ch.Resume(0) })
+	m.autoRemux(ch)
+	go ch.Resume(0)
 
 	if shouldSave {
 		if err := m.SaveConfig(); err != nil {
@@ -216,48 +217,32 @@ func (m *Manager) RemuxChannel(username string) error {
 	}
 	ch := thing.(*channel.Channel)
 	go func() {
-		if !m.mayRemux(ch) {
-			return
-		}
-		if _, err := ch.RemuxOrphans(); err != nil {
+		if _, err := ch.RemuxOrphans(m.remuxChannels()...); err != nil {
 			ch.Error("remux: %s", err.Error())
 		}
 	}()
 	return nil
 }
 
-// autoRemux repairs recordings orphaned by a failed merge or by a crash
-// mid-stream, then runs next. The scan must finish first: a new recording can
-// reuse the same base name, and the scan would delete the file it appends to.
-func (m *Manager) autoRemux(ch *channel.Channel, next func()) {
+// autoRemux repairs leftovers without delaying or restarting the recorder.
+// NextFile allocates a new base whenever an earlier recording still exists.
+func (m *Manager) autoRemux(ch *channel.Channel) {
 	go func() {
-		if server.Config != nil && server.Config.AutoRemux && m.mayRemux(ch) {
-			if _, err := ch.RemuxOrphansQuiet(); err != nil {
+		if server.Config != nil && server.Config.AutoRemux {
+			if _, err := ch.RemuxOrphansQuiet(m.remuxChannels()...); err != nil {
 				ch.Error("remux: %s", err.Error())
 			}
-		}
-		if next != nil {
-			next()
 		}
 	}()
 }
 
-// mayRemux refuses to scan when another channel's recordings would match the
-// same filenames, because both would then claim -- and delete -- the same pair.
-func (m *Manager) mayRemux(ch *channel.Channel) bool {
-	var conflict *channel.Channel
+func (m *Manager) remuxChannels() []*channel.Channel {
+	var channels []*channel.Channel
 	m.Channels.Range(func(_, value any) bool {
-		if other := value.(*channel.Channel); ch.ConflictsWith(other) {
-			conflict = other
-			return false
-		}
+		channels = append(channels, value.(*channel.Channel))
 		return true
 	})
-	if conflict == nil {
-		return true
-	}
-	ch.Info("remux: skipped, %s records to filenames this pattern cannot be told apart from", conflict.Config.Username)
-	return false
+	return channels
 }
 
 // ChannelInfo returns a list of channel information for the web UI.

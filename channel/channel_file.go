@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/teacat/chaturbate-dvr/server"
@@ -25,6 +26,10 @@ type Pattern struct {
 	Sequence int
 }
 
+// Serialize filename allocation across channels, including different stream
+// formats. A new recording must never append to a leftover or an encode input.
+var recordingFileMu sync.Mutex
+
 // NextFile prepares the next file to be created, by cleaning up the last file and generating a new one
 func (ch *Channel) NextFile() error {
 	if err := ch.Cleanup(); err != nil {
@@ -34,14 +39,49 @@ func (ch *Channel) NextFile() error {
 	if err != nil {
 		return err
 	}
-	ch.setCurrentFilename(filename)
+	recordingFileMu.Lock()
+	defer recordingFileMu.Unlock()
+	filename, err = filepath.Abs(filename)
+	if err != nil {
+		return fmt.Errorf("resolve recording filename: %w", err)
+	}
+	filename, err = unusedRecordingBase(filename)
+	if err != nil {
+		return err
+	}
 	if err := ch.CreateNewFile(filename); err != nil {
 		return err
 	}
+	ch.setCurrentFilename(filename)
 
 	// Increment the sequence number for the next file
 	ch.Sequence++
 	return nil
+}
+
+// Keep every version of a recording separate, even when --pattern has no
+// date or sequence. The mux/compression pipeline always leaves at least one
+// of these files in place until it finishes using the base.
+func unusedRecordingBase(base string) (string, error) {
+	for n := 0; n < 1000; n++ {
+		candidate := base
+		if n > 0 {
+			candidate = fmt.Sprintf("%s (%d)", base, n)
+		}
+		used := false
+		for _, suffix := range []string{".ts", ".mp4", ".mkv", ".video.ts", ".audio.ts", videoSidecarSuffix, audioSidecarSuffix, ".video.mkv", ".audio.mkv"} {
+			if _, err := os.Lstat(candidate + suffix); err == nil {
+				used = true
+				break
+			} else if !os.IsNotExist(err) {
+				return "", fmt.Errorf("check recording filename: %w", err)
+			}
+		}
+		if !used {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no unused recording filename for %s", base)
 }
 
 // Cleanup cleans the file and resets it, called when the stream errors out or before next file was created.
@@ -279,14 +319,25 @@ func (ch *Channel) CreateNewFile(filename string) error {
 	ch.audioMediaBytes = 0
 
 	videoPath := ch.videoPath(filename)
-	file, err := os.OpenFile(videoPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+	file, err := os.OpenFile(videoPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0777)
 	if err != nil {
 		return fmt.Errorf("cannot open file: %s: %w", filename, err)
 	}
-	ch.File = file
+	var audioFile *os.File
+	created := false
+	defer func() {
+		if !created {
+			_ = file.Close()
+			_ = os.Remove(videoPath)
+			if audioFile != nil {
+				_ = audioFile.Close()
+				_ = os.Remove(ch.audioPath(filename))
+			}
+		}
+	}()
 
 	if len(ch.InitSegment) > 0 {
-		n, err := ch.File.Write(ch.InitSegment)
+		n, err := file.Write(ch.InitSegment)
 		if err != nil {
 			return fmt.Errorf("write init segment: %w", err)
 		}
@@ -295,24 +346,20 @@ func (ch *Channel) CreateNewFile(filename string) error {
 
 	if ch.HasSeparateAudio {
 		audioPath := ch.audioPath(filename)
-		audioFile, err := os.OpenFile(audioPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0777)
+		audioFile, err = os.OpenFile(audioPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0777)
 		if err != nil {
-			_ = ch.File.Close()
-			ch.File = nil
 			return fmt.Errorf("cannot open audio file: %s: %w", filename, err)
 		}
-		ch.AudioFile = audioFile
 
 		if len(ch.AudioInitSegment) > 0 {
-			if _, err := ch.AudioFile.Write(ch.AudioInitSegment); err != nil {
-				_ = ch.File.Close()
-				_ = ch.AudioFile.Close()
-				ch.File = nil
-				ch.AudioFile = nil
+			if _, err := audioFile.Write(ch.AudioInitSegment); err != nil {
 				return fmt.Errorf("write audio init segment: %w", err)
 			}
 		}
 	}
+	ch.File = file
+	ch.AudioFile = audioFile
+	created = true
 
 	return nil
 }

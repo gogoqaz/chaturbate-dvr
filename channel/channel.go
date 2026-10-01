@@ -25,7 +25,9 @@ type Channel struct {
 
 	// pauseMu guards the IsPaused state transition so concurrent resumes can't
 	// both start a Monitor goroutine. See ResumeIfPaused.
-	pauseMu sync.Mutex
+	pauseMu    sync.Mutex
+	stopped    bool
+	monitorCtx context.Context
 
 	// remuxing keeps a second remux scan from starting while one is still
 	// walking the recording directory.
@@ -89,15 +91,6 @@ func (ch *Channel) Publisher() {
 	}
 }
 
-// WithCancel creates a new context with a cancel function,
-// then stores the cancel function in the channel's CancelFunc field.
-//
-// This is used to cancel the context when the channel is stopped or paused.
-func (ch *Channel) WithCancel(ctx context.Context) (context.Context, context.CancelFunc) {
-	ctx, ch.CancelFunc = context.WithCancel(ctx)
-	return ctx, ch.CancelFunc
-}
-
 // Info logs an informational message.
 func (ch *Channel) Info(format string, a ...any) {
 	ch.LogCh <- fmt.Sprintf("%s [INFO] %s", time.Now().Format("15:04"), fmt.Sprintf(format, a...))
@@ -157,37 +150,49 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 func (ch *Channel) Pause() {
 	// Stop the monitoring loop, this also updates `ch.IsOnline` to false
 	// `context.Canceled` → `ch.Monitor()` → `onRetry` → `ch.UpdateOnlineStatus(false)`.
-	ch.CancelFunc()
-
 	ch.pauseMu.Lock()
+	if ch.stopped {
+		ch.pauseMu.Unlock()
+		return
+	}
+	ch.CancelFunc()
+	ch.PauseCancelFunc()
 	ch.Config.IsPaused = true
+	ctx, cancel := context.WithCancel(context.Background())
+	ch.PauseCancelFunc = cancel
 	ch.pauseMu.Unlock()
 
 	ch.Update()
 	ch.Info("channel paused")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	ch.PauseCancelFunc = cancel
 	go ch.CheckOnlineWhilePaused(ctx, 0)
 }
 
 // Stop stops the channel and cancels the context.
 func (ch *Channel) Stop() {
+	ch.pauseMu.Lock()
+	ch.stopped = true
 	ch.CancelFunc()
 	ch.PauseCancelFunc()
+	ch.pauseMu.Unlock()
 	ch.Info("channel stopped")
 }
 
-// Resume resumes the channel monitoring.
+// Resume starts a channel that is still intended to be active. Startup must
+// preserve a pause or stop requested before its goroutine gets scheduled.
 //
 // `startSeq` is used to prevent all channels from starting at the same time, preventing TooManyRequests errors.
 // It's only be used when program starting and trying to resume all channels at once.
 func (ch *Channel) Resume(startSeq int) {
 	ch.pauseMu.Lock()
-	ch.Config.IsPaused = false
+	if ch.stopped || ch.Config.IsPaused || (ch.monitorCtx != nil && ch.monitorCtx.Err() == nil) {
+		ch.pauseMu.Unlock()
+		return
+	}
+	ctx := ch.prepareMonitor()
 	ch.pauseMu.Unlock()
 
-	ch.resume(startSeq)
+	ch.resume(ctx, startSeq)
 }
 
 // ResumeIfPaused resumes the channel only when it is currently paused, flipping
@@ -195,25 +200,40 @@ func (ch *Channel) Resume(startSeq int) {
 // Monitor goroutine. It reports whether this call performed the resume.
 func (ch *Channel) ResumeIfPaused(startSeq int) bool {
 	ch.pauseMu.Lock()
-	if !ch.Config.IsPaused {
+	if ch.stopped || !ch.Config.IsPaused {
 		ch.pauseMu.Unlock()
 		return false
 	}
 	ch.Config.IsPaused = false
+	ctx := ch.prepareMonitor()
 	ch.pauseMu.Unlock()
 
-	ch.resume(startSeq)
+	ch.resume(ctx, startSeq)
 	return true
 }
 
-// resume performs the actual resume work once the paused state has been cleared.
-func (ch *Channel) resume(startSeq int) {
+// prepareMonitor runs under pauseMu, so Pause/Stop can cancel even a monitor
+// that has not started yet. Monitor must not replace this context later.
+func (ch *Channel) prepareMonitor() context.Context {
 	ch.PauseCancelFunc()
+	ch.monitorCtx, ch.CancelFunc = context.WithCancel(context.Background())
+	return ch.monitorCtx
+}
+
+func (ch *Channel) resume(ctx context.Context, startSeq int) {
 	ch.Update()
 	ch.Info("channel resumed")
 
-	<-time.After(time.Duration(startSeq) * time.Second)
-	go ch.Monitor()
+	timer := time.NewTimer(time.Duration(startSeq) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	if ctx.Err() == nil {
+		go ch.Monitor(ctx)
+	}
 }
 
 // UpdateOnlineStatus updates the online status of the channel.
@@ -243,6 +263,9 @@ func (ch *Channel) CheckOnlineWhilePaused(ctx context.Context, startSeq int) {
 	}
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		waitInterval := time.Duration(baseIntervalMinutes) * time.Minute
 
 		status, err := client.GetRoomStatus(ctx, ch.Config.Username)

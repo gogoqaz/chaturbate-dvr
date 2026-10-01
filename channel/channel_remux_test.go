@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,32 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/teacat/chaturbate-dvr/entity"
 )
+
+// No Publisher is needed for file/lifecycle tests. Buffered notifications keep
+// these tests independent of the UI's unrelated shared-state races.
+func bufferedTestChannel(conf *entity.ChannelConfig) *Channel {
+	return &Channel{
+		Config: conf, LogCh: make(chan string, 100), UpdateCh: make(chan bool, 100),
+		CancelFunc: func() {}, PauseCancelFunc: func() {},
+	}
+}
+
+func combinedMP4(t *testing.T) []byte {
+	t.Helper()
+	video, err := mp4.DecodeFile(bytes.NewReader(buildFragmentedMP4(t, "video", 90000, []byte{1, 2, 3})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio, err := mp4.DecodeFile(bytes.NewReader(buildFragmentedMP4(t, "audio", 44100, []byte{4, 5})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := writeCombinedFragmentedMP4(&out, video, audio, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
 
 const defaultPattern = "{{.Username}}_{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}{{if .Sequence}}_{{.Sequence}}{{end}}"
 
@@ -113,12 +140,12 @@ func TestFindOrphanPairsSkipsUnfinishedAndAlreadyMerged(t *testing.T) {
 	// Backdated, so only the CurrentFilename guard can keep it out.
 	current := filepath.Join(dir, "alice_2025-09-03_11-00-00")
 	writeStaleSidecars(t, current, []byte("video"), []byte("audio"))
-	ch.CurrentFilename = current
+	ch.setCurrentFilename(current)
 
 	// Already merged in an earlier run.
 	merged := filepath.Join(dir, "alice_2025-09-03_12-00-00")
 	writeStaleSidecars(t, merged, []byte("video"), []byte("audio"))
-	writeSidecar(t, merged+".mp4", []byte("merged"))
+	writeSidecar(t, merged+".mp4", combinedMP4(t))
 
 	// Single-track recording: no audio to merge with.
 	lone := filepath.Join(dir, "alice_2025-09-03_13-00-00")
@@ -269,7 +296,7 @@ func TestWildcardPatternsKeepsSentinelLookalikesLiteral(t *testing.T) {
 		t.Fatalf("wildcardPatterns() error = %v", err)
 	}
 	for _, pattern := range patterns {
-		if !strings.HasPrefix(pattern, "xWiLdCaRdx/alice987654321_") {
+		if !strings.Contains(pattern, "/xWiLdCaRdx/alice987654321_") {
 			t.Fatalf("pattern = %q, want the literals preserved", pattern)
 		}
 	}
@@ -281,40 +308,162 @@ func TestWildcardPatternsKeepsSentinelLookalikesLiteral(t *testing.T) {
 	}
 }
 
-func TestConflictsWith(t *testing.T) {
-	t.Parallel()
+func TestFindOrphanPairsRequiresOneOwnerForEachFilename(t *testing.T) {
+	dir := t.TempDir()
+	alice := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: filepath.Join(dir, "{{.Username}}_{{.Year}}_10")})
+	other := bufferedTestChannel(&entity.ChannelConfig{Username: "2026", Pattern: filepath.Join(dir, "alice_{{.Username}}_{{.Month}}")})
+	shared := filepath.Join(dir, "alice_2026_10")
+	mine := filepath.Join(dir, "alice_2025_10")
+	writeStaleSidecars(t, shared, []byte("video"), []byte("audio"))
+	writeStaleSidecars(t, mine, []byte("video"), []byte("audio"))
+	peers := []*Channel{alice, other}
+	for _, ch := range peers {
+		bases, err := ch.findOrphanPairs(peers...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, base := range bases {
+			if base == shared {
+				t.Fatal("a filename matched by two channels must not be claimed")
+			}
+		}
+		if ch == alice && (len(bases) != 1 || bases[0] != mine) {
+			t.Fatalf("unique recording must still be recoverable: %v", bases)
+		}
+	}
+}
 
-	const timeOnly = "videos/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}-{{.Second}}"
-	// Renders one character of the username, so it separates some names but not others.
-	const initialOnly = `videos/{{printf "%.1s" .Username}}_{{.Year}}`
+func TestRemuxRecognizesRelativeAndAbsoluteAliases(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "alice")
+	writeStaleSidecars(t, base, []byte("video"), []byte("audio"))
+	a := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: filepath.Join(relative, "{{.Username}}")})
+	b := bufferedTestChannel(&entity.ChannelConfig{Username: "bob", Pattern: base})
+	for _, ch := range []*Channel{a, b} {
+		bases, err := ch.findOrphanPairs(a, b)
+		if err != nil || len(bases) != 0 {
+			t.Fatalf("aliases must be ambiguous: bases=%v err=%v", bases, err)
+		}
+	}
+	if ready, _ := orphanPairReady(base, filepath.Join(relative, "alice"), time.Now()); ready {
+		t.Fatal("relative current filename must protect the absolute candidate")
+	}
+	output := base + ".mp4"
+	inFlightMux.Store(output, struct{}{})
+	defer inFlightMux.Delete(output)
+	if err := a.FinalizeMux("", "", filepath.Join(relative, "alice.mp4"), nil, nil); !errors.Is(err, ErrMuxBusy) {
+		t.Fatalf("relative output must share the absolute claim: %v", err)
+	}
+}
 
-	tests := []struct {
-		name         string
-		aUser, aPatt string
-		bUser, bPatt string
-		want         bool
+func TestMuxKeepsSidecarsUntilAllocationCheckFinishes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	base := filepath.Join(dir, "alice")
+	writeStaleSidecars(t, base,
+		buildFragmentedMP4(t, "video", 90000, []byte{1, 2, 3}),
+		buildFragmentedMP4(t, "audio", 44100, []byte{4, 5}))
+	video, _ := os.Stat(base + videoSidecarSuffix)
+	audio, _ := os.Stat(base + audioSidecarSuffix)
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	recordingFileMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			recordingFileMu.Unlock()
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		done <- ch.FinalizeMux(base+videoSidecarSuffix, base+audioSidecarSuffix, base+".mp4", video, audio)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for !muxHasBothTracks(base + ".mp4") {
+		if time.Now().After(deadline) {
+			t.Fatal("mux did not create its output")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for _, suffix := range []string{videoSidecarSuffix, audioSidecarSuffix} {
+		if _, err := os.Stat(base + suffix); err != nil {
+			t.Fatalf("allocation check must still see the original sidecars: %v", err)
+		}
+	}
+	recordingFileMu.Unlock()
+	locked = false
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWildcardPatternsRejectsUnsupportedTimeTransforms(t *testing.T) {
+	for _, pattern := range []string{
+		`videos/{{.Username}}_{{printf "%.2s" .Year}}`,
+		`videos/{{if eq .Year "2026"}}new{{else}}old{{end}}`,
+		`videos/{{$name := .Username}}{{$name}}_{{.Year}}`,
+		`videos/literal*_{{.Username}}`,
+	} {
+		ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: pattern})
+		if _, err := ch.wildcardPatterns(); err == nil {
+			t.Errorf("unsupported pattern must fail explicitly: %s", pattern)
+		}
+	}
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: `videos/{{printf "%.1s" .Username}}_{{.Year}}`})
+	patterns, err := ch.wildcardPatterns()
+	if err != nil || !ch.ownsRecording("videos/a_2026", patterns) {
+		t.Fatalf("static username formatting should remain supported: %v, %v", patterns, err)
+	}
+}
+
+func TestRemuxRetriesLargeOutputWithoutMoov(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	base := filepath.Join(dir, "alice")
+	writeStaleSidecars(t, base,
+		buildFragmentedMP4(t, "video", 90000, []byte{1, 2, 3}),
+		buildFragmentedMP4(t, "audio", 44100, []byte{4, 5}))
+	// A valid, large mdat box without a moov: size alone must not skip repair.
+	var partial bytes.Buffer
+	mdat := &mp4.MdatBox{}
+	mdat.AddSampleData(make([]byte, 4096))
+	if err := mdat.Encode(&partial); err != nil {
+		t.Fatal(err)
+	}
+	writeSidecar(t, base+".mp4", partial.Bytes())
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	if merged, err := ch.RemuxOrphans(); err != nil || merged != 1 {
+		t.Fatalf("large incomplete output must be retried: merged=%d err=%v", merged, err)
+	}
+	if !muxHasBothTracks(base + ".mp4") {
+		t.Fatal("repaired output must contain readable video and audio tracks")
+	}
+}
+
+func TestMuxHasBothTracksRejectsTruncatedOrSingleTrackOutput(t *testing.T) {
+	dir := t.TempDir()
+	valid := combinedMP4(t)
+	for _, tt := range []struct {
+		name string
+		data []byte
+		want bool
 	}{
-		{"distinct usernames", "alice", defaultPattern, "bob", defaultPattern, false},
-		{"prefix usernames", "ana", defaultPattern, "ana2", defaultPattern, false},
-		{"username omitted", "alice", timeOnly, "bob", timeOnly, true},
-		{"same rendered initial", "alice", initialOnly, "adam", initialOnly, true},
-		{"different rendered initial", "alice", initialOnly, "bob", initialOnly, false},
-		{"one pattern subsumes the other", "alice", "videos/{{.Username}}_{{.Year}}", "alice_2025", "videos/{{.Username}}", true},
-	}
-	for _, tt := range tests {
-		a := New(&entity.ChannelConfig{Username: tt.aUser, Pattern: tt.aPatt})
-		b := New(&entity.ChannelConfig{Username: tt.bUser, Pattern: tt.bPatt})
-		if got := a.ConflictsWith(b); got != tt.want {
-			t.Errorf("%s: ConflictsWith() = %v, want %v", tt.name, got, tt.want)
+		{"complete", valid, true},
+		{"truncated payload", valid[:len(valid)-1], false},
+		{"single track", buildFragmentedMP4(t, "video", 90000, []byte{1}), false},
+	} {
+		path := filepath.Join(dir, tt.name+".mp4")
+		writeSidecar(t, path, tt.data)
+		if got := muxHasBothTracks(path); got != tt.want {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
 		}
-		if got := b.ConflictsWith(a); got != tt.want {
-			t.Errorf("%s: reversed ConflictsWith() = %v, want %v", tt.name, got, tt.want)
-		}
-	}
-
-	alice := New(&entity.ChannelConfig{Username: "alice", Pattern: timeOnly})
-	if alice.ConflictsWith(alice) {
-		t.Error("a channel must not conflict with itself")
 	}
 }
 

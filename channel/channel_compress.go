@@ -252,7 +252,11 @@ func (ch *Channel) CompressFile(srcPath string) {
 		ratio := float64(mkvSize) / float64(srcSize) * 100
 
 		// Delete the original file after successful compression
-		if err := os.Remove(srcPath); err != nil {
+		// Allocation must see either the source or its completed replacement.
+		recordingFileMu.Lock()
+		err = os.Remove(srcPath)
+		recordingFileMu.Unlock()
+		if err != nil {
 			ch.Error("compress: failed to delete %s - %s", srcFilename, err.Error())
 			return
 		}
@@ -275,13 +279,49 @@ var ErrMuxBusy = errors.New("merge already in progress")
 // cannot write the same file at once.
 var inFlightMux sync.Map
 
+// A crashed ffmpeg can leave nearly all media bytes without the final moov.
+// Skip an existing output only when it is a readable MP4 with both tracks.
+// Lazy mdat decoding avoids loading the recording payload into memory.
+func muxHasBothTracks(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	parsed, err := mp4.DecodeFile(file, mp4.WithDecodeMode(mp4.DecModeLazyMdat))
+	if err != nil || parsed.Moov == nil {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil || parsed.Size() > uint64(info.Size()) {
+		return false
+	}
+	var video, audio bool
+	for _, track := range parsed.Moov.Traks {
+		if track.Mdia == nil || track.Mdia.Hdlr == nil {
+			continue
+		}
+		switch track.Mdia.Hdlr.HandlerType {
+		case "vide":
+			video = true
+		case "soun":
+			audio = true
+		}
+	}
+	return video && audio
+}
+
 // FinalizeMux merges a sidecar pair, and discards the sidecars only once the
 // result looks sound, so a failed merge can always be retried by Remux.
 func (ch *Channel) FinalizeMux(videoPath, audioPath, outputPath string, videoInfo, audioInfo os.FileInfo) error {
-	if _, loaded := inFlightMux.LoadOrStore(outputPath, struct{}{}); loaded {
+	claimPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return fmt.Errorf("resolve mux output: %w", err)
+	}
+	if _, loaded := inFlightMux.LoadOrStore(claimPath, struct{}{}); loaded {
 		return ErrMuxBusy
 	}
-	defer inFlightMux.Delete(outputPath)
+	defer inFlightMux.Delete(claimPath)
 
 	if err := ch.MuxAV(videoPath, audioPath, outputPath); err != nil {
 		ch.Info("mux: ffmpeg mux failed, trying native fallback: %s", err.Error())
@@ -302,8 +342,12 @@ func (ch *Channel) FinalizeMux(videoPath, audioPath, outputPath string, videoInf
 		return ErrMuxRejected
 	}
 
+	// A sequential stat of all suffixes must not straddle the transition from
+	// sidecars to the merged output. Never hold this lock while running muxers.
+	recordingFileMu.Lock()
 	_ = os.Remove(videoPath)
 	_ = os.Remove(audioPath)
+	recordingFileMu.Unlock()
 
 	if ch.Config.Compress {
 		ch.CompressFile(outputPath)
