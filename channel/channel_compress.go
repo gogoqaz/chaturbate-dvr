@@ -314,7 +314,7 @@ func muxHasBothTracks(path string) bool {
 // FinalizeMux merges a sidecar pair, and discards the sidecars only once the
 // result looks sound, so a failed merge can always be retried by Remux.
 func (ch *Channel) FinalizeMux(videoPath, audioPath, outputPath string, videoInfo, audioInfo os.FileInfo) error {
-	claimPath, err := filepath.Abs(outputPath)
+	claimPath, err := canonicalPath(outputPath)
 	if err != nil {
 		return fmt.Errorf("resolve mux output: %w", err)
 	}

@@ -120,6 +120,10 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, time.Time, erro
 		return nil, time.Time{}, err
 	}
 	root := patternRoot(ch.Config.Pattern)
+	scanRoot, err := canonicalPath(root)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("resolve recording root: %w", err)
+	}
 	var otherMatchers [][]string
 	for _, peer := range peers {
 		if peer == ch {
@@ -132,21 +136,33 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, time.Time, erro
 		if i := strings.Index(peer.Config.Pattern, "{{"); i >= 0 {
 			mayTraverse = strings.Contains(peer.Config.Pattern[i:], "..")
 		}
-		if !mayTraverse && !remuxRootsOverlap(root, patternRoot(peer.Config.Pattern)) {
-			continue
-		}
 		patterns, err := peer.wildcardPatterns()
 		if err != nil {
+			if !mayTraverse && !remuxRootsOverlap(root, patternRoot(peer.Config.Pattern)) {
+				continue
+			}
 			return nil, time.Time{}, fmt.Errorf("cannot establish ownership for %s: %w", peer.Config.Username, err)
+		}
+		if !mayTraverse {
+			var overlaps bool
+			for _, pattern := range patterns {
+				if remuxRootsOverlap(scanRoot, filepath.Dir(filepath.FromSlash(pattern))) {
+					overlaps = true
+					break
+				}
+			}
+			if !overlaps {
+				continue
+			}
 		}
 		otherMatchers = append(otherMatchers, patterns)
 	}
-	rootDepth := strings.Count(filepath.ToSlash(root), "/")
+	rootDepth := strings.Count(filepath.ToSlash(scanRoot), "/")
 	cutoff := time.Now().Add(-remuxQuietPeriod)
 
 	var bases []string
 	var retryAt time.Time
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(scanRoot, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			// An unreadable subdirectory must not abort the whole scan.
 			if entry != nil && entry.IsDir() {
@@ -155,7 +171,7 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, time.Time, erro
 			return nil
 		}
 		if entry.IsDir() {
-			if path != root && (strings.HasPrefix(entry.Name(), ".") || strings.Count(filepath.ToSlash(path), "/")-rootDepth > remuxScanDepth) {
+			if path != scanRoot && (strings.HasPrefix(entry.Name(), ".") || strings.Count(filepath.ToSlash(path), "/")-rootDepth > remuxScanDepth) {
 				return fs.SkipDir
 			}
 			return nil
@@ -163,7 +179,11 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, time.Time, erro
 		if !strings.HasSuffix(path, videoSidecarSuffix) {
 			return nil
 		}
-		base := strings.TrimSuffix(path, videoSidecarSuffix)
+		relative, err := filepath.Rel(scanRoot, path)
+		if err != nil {
+			return err
+		}
+		base := strings.TrimSuffix(filepath.Join(root, relative), videoSidecarSuffix)
 		if !ch.ownsRecording(base, matchers) {
 			return nil
 		}
@@ -198,17 +218,11 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, time.Time, erro
 func remuxRootsOverlap(a, b string) bool {
 	roots := []string{a, b}
 	for i, root := range roots {
-		absolute, err := filepath.Abs(root)
+		resolved, err := canonicalPath(root)
 		if err != nil {
 			return true
 		}
-		resolved, err := filepath.EvalSymlinks(absolute)
-		if err == nil {
-			absolute = resolved
-		} else if !os.IsNotExist(err) {
-			return true
-		}
-		roots[i] = absolute
+		roots[i] = resolved
 	}
 	for i := range roots {
 		relative, err := filepath.Rel(roots[i], roots[1-i])
@@ -223,8 +237,8 @@ func remuxRootsOverlap(a, b string) bool {
 // left alone, empty when the files are simply not a pair.
 func orphanPairReady(base, currentFilename string, cutoff time.Time) (bool, string, time.Time) {
 	if currentFilename != "" {
-		current, currentErr := filepath.Abs(currentFilename)
-		candidate, candidateErr := filepath.Abs(base)
+		current, currentErr := canonicalPath(currentFilename)
+		candidate, candidateErr := canonicalPath(base)
 		if currentErr != nil || candidateErr != nil || current == candidate {
 			return false, "still recording", time.Time{}
 		}
@@ -261,7 +275,7 @@ func orphanPairReady(base, currentFilename string, cutoff time.Time) (bool, stri
 // ownsRecording keeps a channel from merging another model's recording, which
 // would file it under the wrong name and per-model folder.
 func (ch *Channel) ownsRecording(base string, matchers []string) bool {
-	absolute, err := filepath.Abs(base)
+	absolute, err := canonicalPath(base)
 	if err != nil {
 		return false
 	}
@@ -297,7 +311,11 @@ func (ch *Channel) wildcardPatterns() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolve filename pattern: %w", err)
 		}
-		patterns = append(patterns, filepath.ToSlash(absolute))
+		resolved, err := canonicalWildcardPatterns(absolute)
+		if err != nil {
+			return nil, fmt.Errorf("resolve filename pattern: %w", err)
+		}
+		patterns = append(patterns, resolved...)
 	}
 	return patterns, nil
 }

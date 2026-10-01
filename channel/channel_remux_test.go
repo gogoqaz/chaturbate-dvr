@@ -195,8 +195,13 @@ func TestFinalizeMuxRefusesToMergeAnOutputAnotherMergeOwns(t *testing.T) {
 	output := base + ".mp4"
 
 	// Stand in for a rotation's Cleanup that is already muxing this file.
-	inFlightMux.Store(output, struct{}{})
-	defer inFlightMux.Delete(output)
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := filepath.Join(resolvedDir, filepath.Base(output))
+	inFlightMux.Store(claim, struct{}{})
+	defer inFlightMux.Delete(claim)
 
 	ch := New(&entity.ChannelConfig{
 		Username: "alice",
@@ -443,10 +448,83 @@ func TestRemuxRecognizesRelativeAndAbsoluteAliases(t *testing.T) {
 		t.Fatal("relative current filename must protect the absolute candidate")
 	}
 	output := base + ".mp4"
-	inFlightMux.Store(output, struct{}{})
-	defer inFlightMux.Delete(output)
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := filepath.Join(resolvedDir, filepath.Base(output))
+	inFlightMux.Store(claim, struct{}{})
+	defer inFlightMux.Delete(claim)
 	if err := a.FinalizeMux("", "", filepath.Join(relative, "alice.mp4"), nil, nil); !errors.Is(err, ErrMuxBusy) {
 		t.Fatalf("relative output must share the absolute claim: %v", err)
+	}
+}
+
+func TestRemuxRecognizesSymlinkAliases(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "recordings")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	base := filepath.Join(root, "alice_2026")
+	writeStaleSidecars(t, base, []byte("video"), []byte("audio"))
+	a := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: filepath.Join(alias, "{{.Username}}_{{.Year}}")})
+	b := bufferedTestChannel(&entity.ChannelConfig{Username: "bob", Pattern: filepath.Join(root, "alice_{{.Year}}")})
+	for _, ch := range []*Channel{a, b} {
+		bases, _, err := ch.findOrphanPairs(ch)
+		if err != nil || len(bases) != 1 {
+			t.Fatalf("scan must follow its root alias: bases=%v err=%v", bases, err)
+		}
+		bases, _, err = ch.findOrphanPairs(a, b)
+		if err != nil || len(bases) != 0 {
+			t.Fatalf("both aliases must recognize ambiguous ownership: bases=%v err=%v", bases, err)
+		}
+	}
+	aliasBase := filepath.Join(alias, "alice_2026")
+	for _, paths := range [][2]string{{base, aliasBase}, {aliasBase, base}} {
+		if ready, _, _ := orphanPairReady(paths[0], paths[1], time.Now()); ready {
+			t.Fatal("a current recording must be protected through either alias")
+		}
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The output does not exist yet: resolving only complete files would
+	// give the two simultaneous muxes different claims.
+	output := filepath.Join(resolvedRoot, "alice_2026.mp4")
+	inFlightMux.Store(output, struct{}{})
+	defer inFlightMux.Delete(output)
+	for _, root := range []string{root, alias} {
+		if err := a.FinalizeMux("", "", filepath.Join(root, "alice_2026.mp4"), nil, nil); !errors.Is(err, ErrMuxBusy) {
+			t.Fatalf("aliased output must share one mux claim: %v", err)
+		}
+	}
+}
+
+func TestRemuxOwnershipResolvesSymlinksInWildcardDirectories(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "recordings")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	aliasRoot := filepath.Join(dir, "dated")
+	if err := os.MkdirAll(aliasRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root, filepath.Join(aliasRoot, "2026")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	base := filepath.Join(root, "alice")
+	writeStaleSidecars(t, base, []byte("video"), []byte("audio"))
+	a := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: filepath.Join(root, "{{.Username}}")})
+	b := bufferedTestChannel(&entity.ChannelConfig{Username: "bob", Pattern: filepath.Join(aliasRoot, "{{.Year}}", "alice")})
+	if bases, _, err := a.findOrphanPairs(a, b); err != nil || len(bases) != 0 {
+		t.Fatalf("a wildcard directory alias must still establish peer ownership: bases=%v err=%v", bases, err)
 	}
 }
 
