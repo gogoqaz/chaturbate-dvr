@@ -16,14 +16,9 @@ import (
 )
 
 // Monitor starts monitoring the channel for live streams and records them.
-func (ch *Channel) Monitor() {
+func (ch *Channel) Monitor(ctx context.Context) {
 	client := chaturbate.NewClient()
 	ch.Info("starting to record `%s`", ch.Config.Username)
-
-	// Create a new context with a cancel function,
-	// the CancelFunc will be stored in the channel's CancelFunc field
-	// and will be called by `Pause` or `Stop` functions
-	ctx, _ := ch.WithCancel(context.Background())
 
 	var err error
 	for {

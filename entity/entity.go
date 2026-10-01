@@ -68,6 +68,7 @@ type Config struct {
 	UserAgent     string
 	Domain        string
 
+	AutoRemux      bool
 	OutputDir      string
 	PerModelFolder bool
 }

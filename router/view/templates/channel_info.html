@@ -133,5 +133,19 @@
   </div>
   <!-- / Action buttons -->
 
+  <!-- Remux -->
+  <div class="mt-2">
+    <button type="button" class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium border border-zinc-200 dark:border-zinc-600 text-zinc-600 dark:text-zinc-300 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
+            hx-post="/remux_channel/{{ .Username }}" hx-swap="none">
+      <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M4 4v6h6M20 20v-6h-6"/>
+        <path d="M20 9a8 8 0 00-14.14-3.36L4 10m16 4l-1.86 4.36A8 8 0 014 15"/>
+      </svg>
+      Remux Leftovers
+    </button>
+    <p class="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1.5 text-center">Merges <span class="font-mono">.video</span>/<span class="font-mono">.audio</span> files a failed mux left behind. Progress appears in the log.</p>
+  </div>
+  <!-- / Remux -->
+
 </div>
 {{ end }}

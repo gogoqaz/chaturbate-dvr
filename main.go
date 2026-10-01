@@ -107,6 +107,12 @@ func main() {
 				Usage: "Compress recorded files (.ts or .mp4) to .mkv using ffmpeg after recording",
 				Value: false,
 			},
+			&cli.BoolFlag{
+				Name:    "auto-remux",
+				Usage:   "Merge leftover .video/.audio files from a failed mux when a channel starts",
+				EnvVars: []string{"AUTO_REMUX"},
+				Value:   true,
+			},
 			&cli.StringFlag{
 				Name:    "output-dir",
 				Usage:   "Directory to move completed recordings to (empty = keep in place)",

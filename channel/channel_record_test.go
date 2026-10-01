@@ -22,6 +22,7 @@ func (noopManager) CreateChannel(*entity.ChannelConfig, bool) error { return nil
 func (noopManager) StopChannel(string) error                        { return nil }
 func (noopManager) PauseChannel(string) error                       { return nil }
 func (noopManager) ResumeChannel(string) error                      { return nil }
+func (noopManager) RemuxChannel(string) error                       { return nil }
 func (noopManager) ChannelInfo() []*entity.ChannelInfo              { return nil }
 func (noopManager) Publish(string, *entity.ChannelInfo)             {}
 func (noopManager) Subscriber(http.ResponseWriter, *http.Request)   {}

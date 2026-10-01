@@ -10,11 +10,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/r3labs/sse/v2"
 	"github.com/teacat/chaturbate-dvr/channel"
 	"github.com/teacat/chaturbate-dvr/entity"
 	"github.com/teacat/chaturbate-dvr/router/view"
+	"github.com/teacat/chaturbate-dvr/server"
 )
 
 // Manager is responsible for managing channels and their states.
@@ -83,13 +85,20 @@ func (m *Manager) LoadConfig() error {
 		}
 	}
 
-	pausedSeq := 0
-	seq := 0
+	// Register every channel before any starts, so the remux ownership check
+	// sees the whole set rather than a half-populated map.
+	channels := make([]*channel.Channel, 0, len(config))
 	for _, conf := range config {
 		ch := channel.New(conf)
 		m.Channels.Store(conf.Username, ch)
+		channels = append(channels, ch)
+	}
 
+	pausedSeq := 0
+	seq := 0
+	for _, ch := range channels {
 		if ch.Config.IsPaused {
+			m.autoRemux(ch)
 			ch.Info("channel was paused, waiting for resume")
 			ctx, cancel := context.WithCancel(context.Background())
 			ch.PauseCancelFunc = cancel
@@ -97,6 +106,7 @@ func (m *Manager) LoadConfig() error {
 			pausedSeq++
 			continue
 		}
+		m.autoRemux(ch)
 		go ch.Resume(seq)
 		seq++
 	}
@@ -138,6 +148,7 @@ func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) err
 		return fmt.Errorf("channel %s already exists", conf.Username)
 	}
 
+	m.autoRemux(ch)
 	go ch.Resume(0)
 
 	if shouldSave {
@@ -196,6 +207,69 @@ func (m *Manager) ResumeChannel(username string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
+}
+
+// RemuxChannel merges leftover audio/video sidecars in the background, and
+// reports progress through the channel log.
+func (m *Manager) RemuxChannel(username string) error {
+	thing, ok := m.Channels.Load(username)
+	if !ok {
+		return nil
+	}
+	ch := thing.(*channel.Channel)
+	go func() {
+		if _, err := ch.RemuxOrphans(m.remuxChannels()...); err != nil {
+			ch.Error("remux: %s", err.Error())
+		}
+	}()
+	return nil
+}
+
+// autoRemux repairs leftovers without delaying or restarting the recorder.
+// NextFile allocates a new base whenever an earlier recording still exists.
+func (m *Manager) autoRemux(ch *channel.Channel) {
+	if server.Config != nil && server.Config.AutoRemux {
+		go m.remuxStartup(ch)
+	}
+}
+
+func (m *Manager) remuxStartup(ch *channel.Channel) {
+	done := ch.Done()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		registered, ok := m.Channels.Load(ch.Config.Username)
+		if !ok || registered != ch {
+			return
+		}
+		retryAfter, err := ch.RemuxOrphansQuiet(m.remuxChannels()...)
+		if err != nil {
+			ch.Error("remux: %s", err.Error())
+			return
+		}
+		if retryAfter == 0 {
+			return
+		}
+		timer := time.NewTimer(retryAfter)
+		select {
+		case <-done:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func (m *Manager) remuxChannels() []*channel.Channel {
+	var channels []*channel.Channel
+	m.Channels.Range(func(_, value any) bool {
+		channels = append(channels, value.(*channel.Channel))
+		return true
+	})
+	return channels
 }
 
 // ChannelInfo returns a list of channel information for the web UI.

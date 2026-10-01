@@ -100,6 +100,7 @@ Available options:
 --user-agent value          Custom User-Agent for the request
 --domain value              Chaturbate domain to use (default: "https://chaturbate.global/")
 --compress                  Compress recorded .ts or .mp4 files to .mkv after recording
+--auto-remux                Merge leftover .video/.audio files from a failed mux when a channel starts (default: true)
 --help, -h                  show help
 --version, -v               print the version
 ```
@@ -122,6 +123,9 @@ $ ./chaturbate-dvr -u yamiodymel \
 
 # Enable compression to MKV after recording
 $ ./chaturbate-dvr -u yamiodymel --compress
+
+# Never merge leftovers automatically; use the Remux button instead
+$ ./chaturbate-dvr -u yamiodymel --auto-remux=false
 ```
 
 _Note: In Web UI mode, these flags serve as default values for new channels._
@@ -245,6 +249,18 @@ _Note: output format follows the stream container: legacy HLS is saved as `.ts`,
 **Q: Error `Channel was blocked by Cloudflare`**
 
 > You've been temporarily blocked. See the [Cookies & User-Agent](#-cookies--user-agent) section to bypass.
+
+&nbsp;
+
+**Q: I have `.video.mp4` and `.audio.mp4` files that were never merged.**
+
+> Chaturbate's LL-HLS streams deliver video and audio separately, so a recording is written as a `.video.mp4` / `.audio.mp4` pair and merged when it ends. If the merge fails -- or the program is killed mid-stream -- the pair is left on disk untouched, because it is the only copy of the recording.
+>
+> The DVR merges those leftovers for you: it scans for unmerged pairs whenever a channel starts (disable with `--auto-remux=false`), retrying fresh leftovers after their quiet period, and the channel panel has a **Remux Leftovers** button that scans on demand. Deleting a channel cancels its pending retry. Progress is reported in the channel log.
+>
+> A scan matches each leftover against the configured channels' `--pattern` values and skips files with more than one possible owner. Directory symlink aliases share the same ownership checks and merge lock. Peers in separate recording directories do not block one another. Remux supports direct date/time fields, username formatting, and `{{if .Sequence}}` conditions. Other template transformations are skipped with a log message; the source files are preserved.
+>
+> A pair is only merged once it has been untouched for a couple of minutes. New recordings use an unused filename, adding ` (1)`, ` (2)`, etc. when the pattern reuses a name, so recovery and compression cannot modify the new recording. Failed merges preserve the sidecars. An existing MP4 must pass both the size and audio/video track checks before recovery treats it as complete.
 
 &nbsp;
 
