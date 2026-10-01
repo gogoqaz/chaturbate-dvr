@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/r3labs/sse/v2"
 	"github.com/teacat/chaturbate-dvr/channel"
@@ -227,13 +228,39 @@ func (m *Manager) RemuxChannel(username string) error {
 // autoRemux repairs leftovers without delaying or restarting the recorder.
 // NextFile allocates a new base whenever an earlier recording still exists.
 func (m *Manager) autoRemux(ch *channel.Channel) {
-	go func() {
-		if server.Config != nil && server.Config.AutoRemux {
-			if _, err := ch.RemuxOrphansQuiet(m.remuxChannels()...); err != nil {
-				ch.Error("remux: %s", err.Error())
-			}
+	if server.Config != nil && server.Config.AutoRemux {
+		go m.remuxStartup(ch)
+	}
+}
+
+func (m *Manager) remuxStartup(ch *channel.Channel) {
+	done := ch.Done()
+	for {
+		select {
+		case <-done:
+			return
+		default:
 		}
-	}()
+		registered, ok := m.Channels.Load(ch.Config.Username)
+		if !ok || registered != ch {
+			return
+		}
+		retryAfter, err := ch.RemuxOrphansQuiet(m.remuxChannels()...)
+		if err != nil {
+			ch.Error("remux: %s", err.Error())
+			return
+		}
+		if retryAfter == 0 {
+			return
+		}
+		timer := time.NewTimer(retryAfter)
+		select {
+		case <-done:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 func (m *Manager) remuxChannels() []*channel.Channel {

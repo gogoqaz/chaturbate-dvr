@@ -256,9 +256,9 @@ _Note: output format follows the stream container: legacy HLS is saved as `.ts`,
 
 > Chaturbate's LL-HLS streams deliver video and audio separately, so a recording is written as a `.video.mp4` / `.audio.mp4` pair and merged when it ends. If the merge fails -- or the program is killed mid-stream -- the pair is left on disk untouched, because it is the only copy of the recording.
 >
-> The DVR merges those leftovers for you: it scans for unmerged pairs whenever a channel starts (disable with `--auto-remux=false`), and the channel panel has a **Remux Leftovers** button that scans on demand. Progress is reported in the channel log.
+> The DVR merges those leftovers for you: it scans for unmerged pairs whenever a channel starts (disable with `--auto-remux=false`), retrying fresh leftovers after their quiet period, and the channel panel has a **Remux Leftovers** button that scans on demand. Deleting a channel cancels its pending retry. Progress is reported in the channel log.
 >
-> A scan matches each leftover against the configured channels' `--pattern` values and skips files with more than one possible owner. Remux supports direct date/time fields, username formatting, and `{{if .Sequence}}` conditions. Other template transformations are skipped with a log message; the source files are preserved.
+> A scan matches each leftover against the configured channels' `--pattern` values and skips files with more than one possible owner. Peers in separate recording directories do not block one another. Remux supports direct date/time fields, username formatting, and `{{if .Sequence}}` conditions. Other template transformations are skipped with a log message; the source files are preserved.
 >
 > A pair is only merged once it has been untouched for a couple of minutes. New recordings use an unused filename, adding ` (1)`, ` (2)`, etc. when the pattern reuses a name, so recovery and compression cannot modify the new recording. Failed merges preserve the sidecars. An existing MP4 must pass both the size and audio/video track checks before recovery treats it as complete.
 

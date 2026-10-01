@@ -27,6 +27,7 @@ type Channel struct {
 	// both start a Monitor goroutine. See ResumeIfPaused.
 	pauseMu    sync.Mutex
 	stopped    bool
+	stopCh     chan struct{}
 	monitorCtx context.Context
 
 	// remuxing keeps a second remux scan from starting while one is still
@@ -171,11 +172,30 @@ func (ch *Channel) Pause() {
 // Stop stops the channel and cancels the context.
 func (ch *Channel) Stop() {
 	ch.pauseMu.Lock()
-	ch.stopped = true
+	if !ch.stopped {
+		ch.stopped = true
+		if ch.stopCh != nil {
+			close(ch.stopCh)
+		}
+	}
 	ch.CancelFunc()
 	ch.PauseCancelFunc()
 	ch.pauseMu.Unlock()
 	ch.Info("channel stopped")
+}
+
+// Done is closed when the channel is deleted. Pausing keeps background
+// recovery available, so this signal is independent of the monitor context.
+func (ch *Channel) Done() <-chan struct{} {
+	ch.pauseMu.Lock()
+	defer ch.pauseMu.Unlock()
+	if ch.stopCh == nil {
+		ch.stopCh = make(chan struct{})
+		if ch.stopped {
+			close(ch.stopCh)
+		}
+	}
+	return ch.stopCh
 }
 
 // Resume starts a channel that is still intended to be active. Startup must

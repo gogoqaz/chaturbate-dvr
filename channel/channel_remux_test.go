@@ -92,7 +92,7 @@ func TestFindOrphanPairsSkipsOtherChannelsRecordings(t *testing.T) {
 		Pattern:  filepath.Join(dir, defaultPattern),
 	})
 
-	bases, err := ch.findOrphanPairs()
+	bases, _, err := ch.findOrphanPairs()
 	if err != nil {
 		t.Fatalf("findOrphanPairs() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestFindOrphanPairsMatchesRotatedAndNestedRecordings(t *testing.T) {
 
 	ch := New(&entity.ChannelConfig{Username: "alice", Pattern: pattern})
 
-	bases, err := ch.findOrphanPairs()
+	bases, _, err := ch.findOrphanPairs()
 	if err != nil {
 		t.Fatalf("findOrphanPairs() error = %v", err)
 	}
@@ -151,7 +151,7 @@ func TestFindOrphanPairsSkipsUnfinishedAndAlreadyMerged(t *testing.T) {
 	lone := filepath.Join(dir, "alice_2025-09-03_13-00-00")
 	writeSidecar(t, lone+videoSidecarSuffix, []byte("video"))
 
-	bases, err := ch.findOrphanPairs()
+	bases, _, err := ch.findOrphanPairs()
 	if err != nil {
 		t.Fatalf("findOrphanPairs() error = %v", err)
 	}
@@ -318,7 +318,7 @@ func TestFindOrphanPairsRequiresOneOwnerForEachFilename(t *testing.T) {
 	writeStaleSidecars(t, mine, []byte("video"), []byte("audio"))
 	peers := []*Channel{alice, other}
 	for _, ch := range peers {
-		bases, err := ch.findOrphanPairs(peers...)
+		bases, _, err := ch.findOrphanPairs(peers...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,6 +330,92 @@ func TestFindOrphanPairsRequiresOneOwnerForEachFilename(t *testing.T) {
 		if ch == alice && (len(bases) != 1 || bases[0] != mine) {
 			t.Fatalf("unique recording must still be recoverable: %v", bases)
 		}
+	}
+}
+
+func TestStartupRemuxRetriesFreshLeftoversButNotActiveFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	base := filepath.Join(dir, "alice")
+	active := base + " (1)"
+	video := buildFragmentedMP4(t, "video", 90000, []byte{1, 2, 3})
+	audio := buildFragmentedMP4(t, "audio", 44100, []byte{4, 5})
+	for _, name := range []string{base, active} {
+		writeSidecar(t, name+videoSidecarSuffix, video)
+		writeSidecar(t, name+audioSidecarSuffix, audio)
+	}
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	ch.setCurrentFilename(active)
+	delay, err := ch.RemuxOrphansQuiet(ch)
+	if err != nil || delay <= 0 || delay > remuxQuietPeriod {
+		t.Fatalf("fresh leftovers need a quiet-period retry: delay=%v err=%v", delay, err)
+	}
+	if _, err := os.Stat(base + ".mp4"); !os.IsNotExist(err) {
+		t.Fatalf("fresh sidecars must not be merged yet: %v", err)
+	}
+	writeStaleSidecars(t, base, video, audio)
+	delay, err = ch.RemuxOrphansQuiet(ch)
+	if err != nil || delay != 0 || !muxHasBothTracks(base+".mp4") {
+		t.Fatalf("quiet leftovers should recover without another retry: delay=%v err=%v", delay, err)
+	}
+	for _, suffix := range []string{videoSidecarSuffix, audioSidecarSuffix} {
+		if _, err := os.Stat(active + suffix); err != nil {
+			t.Fatalf("active file must stay untouched and not schedule retries: %v", err)
+		}
+	}
+}
+
+func TestFindOrphanPairsIsolatesUnsupportedPeerRoots(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "alice")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(root, "alice")
+	writeStaleSidecars(t, base, []byte("video"), []byte("audio"))
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: filepath.Join(root, "{{.Username}}")})
+	condition := `{{if eq .Year "2026"}}new{{else}}old{{end}}`
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, filepath.Join(dir, "alice-other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name    string
+		pattern string
+		blocked bool
+	}{
+		{"sibling with same prefix", filepath.Join(dir, "alice-other", condition), false},
+		{"relative sibling", filepath.Join(relative, condition), false},
+		{"overlapping root", filepath.Join(root, condition), true},
+		{"parent root", filepath.Join(dir, condition), true},
+		{"parent traversal", filepath.Join(dir, "alice-other") + "/" + condition + "/../..", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			peer := bufferedTestChannel(&entity.ChannelConfig{Username: "bob", Pattern: tt.pattern})
+			bases, _, err := ch.findOrphanPairs(ch, peer)
+			if tt.blocked {
+				if err == nil {
+					t.Fatal("uncertain ownership in an overlapping root must remain blocked")
+				}
+			} else if err != nil || len(bases) != 1 || bases[0] != base {
+				t.Fatalf("unrelated peer must not disable recovery: bases=%v err=%v", bases, err)
+			}
+			if _, _, err := peer.findOrphanPairs(ch, peer); err == nil {
+				t.Fatal("unsupported peer's own scan must remain blocked")
+			}
+		})
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	peer := bufferedTestChannel(&entity.ChannelConfig{Username: "bob", Pattern: filepath.Join(alias, condition)})
+	if _, _, err := ch.findOrphanPairs(ch, peer); err == nil {
+		t.Fatal("symlink alias must not be treated as a separate root")
 	}
 }
 
@@ -348,12 +434,12 @@ func TestRemuxRecognizesRelativeAndAbsoluteAliases(t *testing.T) {
 	a := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: filepath.Join(relative, "{{.Username}}")})
 	b := bufferedTestChannel(&entity.ChannelConfig{Username: "bob", Pattern: base})
 	for _, ch := range []*Channel{a, b} {
-		bases, err := ch.findOrphanPairs(a, b)
+		bases, _, err := ch.findOrphanPairs(a, b)
 		if err != nil || len(bases) != 0 {
 			t.Fatalf("aliases must be ambiguous: bases=%v err=%v", bases, err)
 		}
 	}
-	if ready, _ := orphanPairReady(base, filepath.Join(relative, "alice"), time.Now()); ready {
+	if ready, _, _ := orphanPairReady(base, filepath.Join(relative, "alice"), time.Now()); ready {
 		t.Fatal("relative current filename must protect the absolute candidate")
 	}
 	output := base + ".mp4"

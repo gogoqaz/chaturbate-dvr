@@ -30,33 +30,40 @@ const remuxScanDepth = 6
 // RemuxOrphans merges every `<name>.video.mp4` / `<name>.audio.mp4` pair this
 // channel left behind, and reports how many were merged.
 func (ch *Channel) RemuxOrphans(peers ...*Channel) (int, error) {
-	return ch.remuxOrphans(true, peers)
+	merged, _, err := ch.remuxOrphans(true, peers)
+	return merged, err
 }
 
-// RemuxOrphansQuiet is RemuxOrphans without the "nothing to do" chatter, for
-// the automatic scan that runs whenever a channel starts.
-func (ch *Channel) RemuxOrphansQuiet(peers ...*Channel) (int, error) {
-	return ch.remuxOrphans(false, peers)
+// RemuxOrphansQuiet runs a startup scan and returns the delay until fresh
+// leftovers can be retried, or zero when no delayed scan is needed.
+func (ch *Channel) RemuxOrphansQuiet(peers ...*Channel) (time.Duration, error) {
+	_, retryAt, err := ch.remuxOrphans(false, peers)
+	if retryAt.IsZero() {
+		return 0, err
+	}
+	return max(time.Until(retryAt), time.Nanosecond), err
 }
 
-func (ch *Channel) remuxOrphans(announceEmpty bool, peers []*Channel) (int, error) {
+func (ch *Channel) remuxOrphans(announceEmpty bool, peers []*Channel) (int, time.Time, error) {
 	if !ch.remuxing.CompareAndSwap(false, true) {
 		if announceEmpty {
 			ch.Info("remux: a scan is already running")
 		}
-		return 0, nil
+		// Startup recovery must not lose its retry when a manual scan owns
+		// the channel. The next scan will recheck the files' quiet period.
+		return 0, time.Now().Add(remuxQuietPeriod), nil
 	}
 	defer ch.remuxing.Store(false)
 
-	bases, err := ch.findOrphanPairs(peers...)
+	bases, retryAt, err := ch.findOrphanPairs(peers...)
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
 	if len(bases) == 0 {
 		if announceEmpty {
 			ch.Info("remux: no unmerged audio/video files found")
 		}
-		return 0, nil
+		return 0, retryAt, nil
 	}
 	ch.Info("remux: found %d unmerged recording(s)", len(bases))
 
@@ -72,7 +79,7 @@ func (ch *Channel) remuxOrphans(announceEmpty bool, peers []*Channel) (int, erro
 		}
 	}
 	ch.Info("remux: merged %d of %d recording(s)", merged, len(bases))
-	return merged, nil
+	return merged, retryAt, nil
 }
 
 // remuxPair reports false without an error when the pair was already handled
@@ -91,7 +98,7 @@ func (ch *Channel) remuxPair(base string) (bool, error) {
 	}
 
 	// The pair may have been picked up by a recording that started since the walk.
-	if ok, _ := orphanPairReady(base, ch.currentFilename(), time.Now().Add(-remuxQuietPeriod)); !ok {
+	if ok, _, _ := orphanPairReady(base, ch.currentFilename(), time.Now().Add(-remuxQuietPeriod)); !ok {
 		return false, nil
 	}
 
@@ -107,27 +114,38 @@ func (ch *Channel) remuxPair(base string) (bool, error) {
 
 // findOrphanPairs returns the base filenames (the path without the sidecar
 // suffix) of every unmerged pair below the channel's recording directory.
-func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, error) {
+func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, time.Time, error) {
 	matchers, err := ch.wildcardPatterns()
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
+	root := patternRoot(ch.Config.Pattern)
 	var otherMatchers [][]string
 	for _, peer := range peers {
 		if peer == ch {
 			continue
 		}
+		// A peer in a separate directory cannot own these recordings. Keep
+		// peers with parent traversal conservative: templates can escape the
+		// literal directory prefix used by patternRoot.
+		mayTraverse := false
+		if i := strings.Index(peer.Config.Pattern, "{{"); i >= 0 {
+			mayTraverse = strings.Contains(peer.Config.Pattern[i:], "..")
+		}
+		if !mayTraverse && !remuxRootsOverlap(root, patternRoot(peer.Config.Pattern)) {
+			continue
+		}
 		patterns, err := peer.wildcardPatterns()
 		if err != nil {
-			return nil, fmt.Errorf("cannot establish ownership for %s: %w", peer.Config.Username, err)
+			return nil, time.Time{}, fmt.Errorf("cannot establish ownership for %s: %w", peer.Config.Username, err)
 		}
 		otherMatchers = append(otherMatchers, patterns)
 	}
-	root := patternRoot(ch.Config.Pattern)
 	rootDepth := strings.Count(filepath.ToSlash(root), "/")
 	cutoff := time.Now().Add(-remuxQuietPeriod)
 
 	var bases []string
+	var retryAt time.Time
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			// An unreadable subdirectory must not abort the whole scan.
@@ -157,7 +175,10 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, error) {
 				return nil
 			}
 		}
-		if ok, reason := orphanPairReady(base, ch.currentFilename(), cutoff); !ok {
+		if ok, reason, quietAt := orphanPairReady(base, ch.currentFilename(), cutoff); !ok {
+			if !quietAt.IsZero() && (retryAt.IsZero() || quietAt.Before(retryAt)) {
+				retryAt = quietAt
+			}
 			if reason != "" {
 				ch.Info("remux: skipping %s (%s)", filepath.Base(base), reason)
 			}
@@ -167,44 +188,74 @@ func (ch *Channel) findOrphanPairs(peers ...*Channel) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("scan %s: %w", root, err)
+		return nil, time.Time{}, fmt.Errorf("scan %s: %w", root, err)
 	}
-	return bases, nil
+	return bases, retryAt, nil
+}
+
+// Directory identity uses absolute paths and resolves existing symlinks.
+// Unknown roots stay conservative; a failed lookup must not prove isolation.
+func remuxRootsOverlap(a, b string) bool {
+	roots := []string{a, b}
+	for i, root := range roots {
+		absolute, err := filepath.Abs(root)
+		if err != nil {
+			return true
+		}
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err == nil {
+			absolute = resolved
+		} else if !os.IsNotExist(err) {
+			return true
+		}
+		roots[i] = absolute
+	}
+	for i := range roots {
+		relative, err := filepath.Rel(roots[i], roots[1-i])
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // orphanPairReady also returns a reason to log when a pair is deliberately
 // left alone, empty when the files are simply not a pair.
-func orphanPairReady(base, currentFilename string, cutoff time.Time) (bool, string) {
+func orphanPairReady(base, currentFilename string, cutoff time.Time) (bool, string, time.Time) {
 	if currentFilename != "" {
 		current, currentErr := filepath.Abs(currentFilename)
 		candidate, candidateErr := filepath.Abs(base)
 		if currentErr != nil || candidateErr != nil || current == candidate {
-			return false, "still recording"
+			return false, "still recording", time.Time{}
 		}
 	}
 	audioInfo, err := os.Stat(base + audioSidecarSuffix)
 	if err != nil {
 		// A lone video sidecar is a single-track recording, not a failed merge.
-		return false, ""
+		return false, "", time.Time{}
 	}
 	videoInfo, err := os.Stat(base + videoSidecarSuffix)
 	if err != nil {
-		return false, ""
+		return false, "", time.Time{}
 	}
 	if videoInfo.ModTime().After(cutoff) || audioInfo.ModTime().After(cutoff) {
-		return false, "still being written"
+		quietAt := videoInfo.ModTime()
+		if audioInfo.ModTime().After(quietAt) {
+			quietAt = audioInfo.ModTime()
+		}
+		return false, "still being written", quietAt.Add(remuxQuietPeriod)
 	}
 	if _, err := os.Stat(base + ".mkv"); err == nil {
-		return false, "merged file already exists"
+		return false, "merged file already exists", time.Time{}
 	}
 	// A .mp4 left next to its sidecars is a merge that died before it could
 	// delete them, so retry it unless the output actually looks complete.
 	if _, err := os.Stat(base + ".mp4"); err == nil {
 		if ok, _ := muxOutputLooksValid(base+".mp4", videoInfo, audioInfo); ok && muxHasBothTracks(base+".mp4") {
-			return false, "merged file already exists"
+			return false, "merged file already exists", time.Time{}
 		}
 	}
-	return true, ""
+	return true, "", time.Time{}
 }
 
 // ownsRecording keeps a channel from merging another model's recording, which
