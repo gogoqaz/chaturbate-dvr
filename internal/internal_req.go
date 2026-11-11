@@ -79,8 +79,13 @@ func (h *Req) GetBytes(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("forbidden: %w", ErrPrivateStream)
 	}
+	// CDN error pages are not media. Reject them so segment downloads retry
+	// without appending the response body or advancing the playlist sequence.
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
 
-	return b, err
+	return b, nil
 }
 
 // Head sends an HTTP HEAD request and returns the status code.
