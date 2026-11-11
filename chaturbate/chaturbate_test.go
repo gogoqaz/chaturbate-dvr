@@ -119,3 +119,58 @@ func TestProcessMediaPlaylistKeepsLastSeqOnFetchFailure(t *testing.T) {
 		t.Fatalf("lastSeq = %d, want 100 (must not advance past failed segment 101)", lastSeq)
 	}
 }
+
+func TestProcessMediaPlaylistRetriesHTTPErrorWithoutRecordingItsBody(t *testing.T) {
+	previous := server.Config
+	server.Config = &entity.Config{}
+	t.Cleanup(func() { server.Config = previous })
+
+	playlistBody := "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n" +
+		"#EXTINF:2,\nseg_1_100_video_abc.m4s\n" +
+		"#EXTINF:2,\nseg_2_101_video_abc.m4s\n" +
+		"#EXTINF:2,\nseg_3_102_video_abc.m4s\n"
+	var failedRequests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/playlist.m3u8", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(playlistBody))
+	})
+	mux.HandleFunc("/seg_1_100_video_abc.m4s", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("media-100"))
+	})
+	mux.HandleFunc("/seg_2_101_video_abc.m4s", func(w http.ResponseWriter, _ *http.Request) {
+		if failedRequests.Add(1) <= 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("<html>Bad Gateway</html>"))
+			return
+		}
+		_, _ = w.Write([]byte("media-101"))
+	})
+	mux.HandleFunc("/seg_3_102_video_abc.m4s", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("media-102"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	pl := &Playlist{PlaylistURL: srv.URL + "/playlist.m3u8"}
+	var recorded strings.Builder
+	handler := func(data []byte, _ float64) error {
+		recorded.Write(data)
+		return nil
+	}
+	lastSeq, initWritten := -1, false
+	client := internal.NewReq()
+	poll := func() {
+		t.Helper()
+		if _, err := pl.processMediaPlaylist(context.Background(), client, pl.PlaylistURL, handler, nil, &lastSeq, &initWritten); err != nil {
+			t.Fatal(err)
+		}
+	}
+	poll()
+	if lastSeq != 100 || recorded.String() != "media-100" || failedRequests.Load() != 3 {
+		t.Fatalf("failed poll: sequence=%d, recording=%q, requests=%d; want 100, media-100, 3", lastSeq, recorded.String(), failedRequests.Load())
+	}
+	poll()
+	if lastSeq != 102 || recorded.String() != "media-100media-101media-102" {
+		t.Fatalf("recovered poll: sequence=%d, recording=%q; want all three media segments exactly once", lastSeq, recorded.String())
+	}
+}
