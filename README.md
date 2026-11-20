@@ -260,7 +260,7 @@ _Note: output format follows the stream container: legacy HLS is saved as `.ts`,
 >
 > A scan matches each leftover against the configured channels' `--pattern` values and skips files with more than one possible owner. Directory symlink aliases share the same ownership checks and merge lock. Peers in separate recording directories do not block one another. Remux supports direct date/time fields, username formatting, and `{{if .Sequence}}` conditions. Other template transformations are skipped with a log message; the source files are preserved.
 >
-> A pair is only merged once it has been untouched for a couple of minutes. New recordings use an unused filename, adding ` (1)`, ` (2)`, etc. when the pattern reuses a name, so recovery and compression cannot modify the new recording. Failed merges preserve the sidecars. An existing MP4 must pass both the size and audio/video track checks before recovery treats it as complete.
+> A pair is only merged once it has been untouched for a couple of minutes. New recordings use an unused filename, adding ` (1)`, ` (2)`, etc. when the pattern reuses a name, so recovery and compression cannot modify the new recording. Merges publish an MP4 only after checking its size and finding media samples in both tracks. Failed merges preserve the sidecars and any existing output. Recovery uses the same checks before treating an existing MP4 as complete.
 
 &nbsp;
 

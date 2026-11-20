@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -255,7 +257,7 @@ func TestRemuxOrphansRetriesAnIncompleteOutput(t *testing.T) {
 	}
 }
 
-func TestFinalizeMuxRemovesAPartialOutputWhenBothMuxersFail(t *testing.T) {
+func TestFinalizeMuxPreservesExistingOutputWhenBothMuxersFail(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir) // no ffmpeg, and the payload is not a valid fMP4
 
@@ -282,8 +284,87 @@ func TestFinalizeMuxRemovesAPartialOutputWhenBothMuxersFail(t *testing.T) {
 	if err := ch.FinalizeMux(base+videoSidecarSuffix, base+audioSidecarSuffix, output, videoInfo, audioInfo); err == nil {
 		t.Fatal("FinalizeMux() error = nil, want a mux failure")
 	}
+	if got, err := os.ReadFile(output); err != nil || string(got) != "partial" {
+		t.Fatalf("existing output changed: %q, %v", got, err)
+	}
+}
+
+func TestFinalizeMuxRejectsVideoOnlyOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake ffmpeg uses a shell script")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	script := "#!/bin/sh\nfor output do :; done\n/bin/cp \"$3\" \"$output\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "ffmpeg"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	base := filepath.Join(dir, "alice")
+	video := buildFragmentedMP4(t, "video", 90000, make([]byte, 1024))
+	audio := buildFragmentedMP4(t, "audio", 44100, []byte{4, 5})
+	writeStaleSidecars(t, base, video, audio)
+	videoPath, audioPath := base+videoSidecarSuffix, base+audioSidecarSuffix
+	videoInfo, err := os.Stat(videoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioInfo, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	output := base + ".mp4"
+	if err := ch.FinalizeMux(videoPath, audioPath, output, videoInfo, audioInfo); !errors.Is(err, ErrMuxRejected) {
+		t.Fatalf("FinalizeMux() error = %v, want ErrMuxRejected", err)
+	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
-		t.Fatalf("partial output must be removed, stat err = %v", err)
+		t.Fatalf("rejected output was published: %v", err)
+	}
+	for path, want := range map[string][]byte{videoPath: video, audioPath: audio} {
+		if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, want) {
+			t.Errorf("source %s changed: %v", path, err)
+		}
+	}
+	if entries, err := filepath.Glob(filepath.Join(dir, ".mux-*")); err != nil || len(entries) != 0 {
+		t.Fatalf("temporary mux output was not removed: %v, %v", entries, err)
+	}
+}
+
+func TestFinalizeMuxAcceptsFFmpegMP4(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg unavailable")
+	}
+	base := filepath.Join(t.TempDir(), "recording")
+	videoPath, audioPath := base+videoSidecarSuffix, base+audioSidecarSuffix
+	for _, args := range [][]string{
+		{"-f", "lavfi", "-i", "testsrc2=size=96x64:rate=10", "-t", "1", "-an", "-c:v", "mpeg4", "-movflags", "empty_moov+frag_keyframe", videoPath},
+		{"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "1", "-vn", "-c:a", "aac", "-movflags", "empty_moov+frag_keyframe", audioPath},
+	} {
+		if out, err := exec.Command("ffmpeg", append([]string{"-v", "error"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("generate input: %v: %s", err, out)
+		}
+	}
+	videoInfo, err := os.Stat(videoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioInfo, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := bufferedTestChannel(&entity.ChannelConfig{Username: "alice", Pattern: base})
+	output := base + ".mp4"
+	if err := ch.FinalizeMux(videoPath, audioPath, output, videoInfo, audioInfo); err != nil {
+		t.Fatal(err)
+	}
+	if !muxHasBothTracks(output) {
+		t.Fatal("expected a published MP4 with audio and video samples")
+	}
+	for _, path := range []string{videoPath, audioPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("sidecar should be removed after publishing: %v", err)
+		}
 	}
 }
 
@@ -614,6 +695,11 @@ func TestRemuxRetriesLargeOutputWithoutMoov(t *testing.T) {
 func TestMuxHasBothTracksRejectsTruncatedOrSingleTrackOutput(t *testing.T) {
 	dir := t.TempDir()
 	valid := combinedMP4(t)
+	parsed, err := mp4.DecodeFile(bytes.NewReader(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	initOnly := valid[:parsed.Init.Size()]
 	for _, tt := range []struct {
 		name string
 		data []byte
@@ -621,6 +707,7 @@ func TestMuxHasBothTracksRejectsTruncatedOrSingleTrackOutput(t *testing.T) {
 	}{
 		{"complete", valid, true},
 		{"truncated payload", valid[:len(valid)-1], false},
+		{"empty tracks", initOnly, false},
 		{"single track", buildFragmentedMP4(t, "video", 90000, []byte{1}), false},
 	} {
 		path := filepath.Join(dir, tt.name+".mp4")
@@ -628,6 +715,96 @@ func TestMuxHasBothTracksRejectsTruncatedOrSingleTrackOutput(t *testing.T) {
 		if got := muxHasBothTracks(path); got != tt.want {
 			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestMuxHasBothTracksChecksFragmentSampleSizes(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		explicitSize bool
+		tfhdPresent  bool
+		tfhdSize     uint32
+		want         bool
+	}{
+		{name: "explicit zero overrides defaults", explicitSize: true, tfhdPresent: true, tfhdSize: 2},
+		{name: "zero tfhd overrides trex", tfhdPresent: true},
+		{name: "inherits tfhd size", tfhdPresent: true, tfhdSize: 2, want: true},
+		{name: "inherits trex size", want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := mp4.DecodeFile(bytes.NewReader(combinedMP4(t)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			trex, _ := parsed.Moov.Mvex.GetTrex(audioTrackID)
+			trex.DefaultSampleSize = 2
+			fragment := parsed.Segments[0].Fragments[0]
+			audio := fragment.Moof.Trafs[1]
+			if tt.tfhdPresent {
+				audio.Tfhd.Flags |= mp4.TfhdDefaultSampleSizePresentFlag
+				audio.Tfhd.DefaultSampleSize = tt.tfhdSize
+			}
+			if !tt.explicitSize {
+				audio.Trun.Flags &^= mp4.TrunSampleSizePresentFlag
+			}
+			if !tt.want {
+				audio.Trun.Samples[0].Size = 0
+				fragment.Mdat.SetData(fragment.Mdat.Data[:3]) // Keep only video bytes.
+			}
+			var data bytes.Buffer
+			if err := parsed.Encode(&data); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "output.mp4")
+			writeSidecar(t, path, data.Bytes())
+			if got := muxHasBothTracks(path); got != tt.want {
+				t.Errorf("muxHasBothTracks() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMuxHasBothTracksChecksProgressiveSampleSizes(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		variableSizes []uint32
+		uniformSize   uint32
+		want          bool
+	}{
+		{name: "zero audio", variableSizes: []uint32{0}},
+		{name: "positive audio", variableSizes: []uint32{2}, want: true},
+		{name: "uniform audio", uniformSize: 2, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			init := mp4.CreateEmptyInit()
+			video := init.AddEmptyTrack(90000, "video", "und").Mdia.Minf.Stbl
+			audio := init.AddEmptyTrack(44100, "audio", "und").Mdia.Minf.Stbl
+			for _, table := range []*mp4.StblBox{video, audio} {
+				table.Stts.SampleCount = []uint32{1}
+				table.Stts.SampleTimeDelta = []uint32{1}
+				table.Stsz.SampleNumber = 1
+			}
+			video.Stsz.SampleUniformSize = 3
+			audio.Stsz.SampleUniformSize = tt.uniformSize
+			audio.Stsz.SampleSize = tt.variableSizes
+			var data bytes.Buffer
+			if err := init.Encode(&data); err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte{1, 2, 3}
+			if tt.want {
+				payload = append(payload, 4, 5)
+			}
+			mdat := &mp4.MdatBox{Data: payload}
+			if err := mdat.Encode(&data); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "output.mp4")
+			writeSidecar(t, path, data.Bytes())
+			if got := muxHasBothTracks(path); got != tt.want {
+				t.Errorf("muxHasBothTracks() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -279,10 +280,15 @@ var ErrMuxBusy = errors.New("merge already in progress")
 // cannot write the same file at once.
 var inFlightMux sync.Map
 
-// A crashed ffmpeg can leave nearly all media bytes without the final moov.
-// Skip an existing output only when it is a readable MP4 with both tracks.
-// Lazy mdat decoding avoids loading the recording payload into memory.
-func muxHasBothTracks(path string) bool {
+// Lazy mdat decoding checks the container and sample metadata without loading
+// the recording payload into memory.
+func muxHasBothTracks(path string) (valid bool) {
+	// The MP4 parser can panic on incomplete metadata left by a crash.
+	defer func() {
+		if recover() != nil {
+			valid = false
+		}
+	}()
 	file, err := os.Open(path)
 	if err != nil {
 		return false
@@ -293,13 +299,63 @@ func muxHasBothTracks(path string) bool {
 		return false
 	}
 	info, err := file.Stat()
-	if err != nil || parsed.Size() > uint64(info.Size()) {
+	if err != nil || parsed.Size() != uint64(info.Size()) {
 		return false
 	}
+
+	fragmentTracks := make(map[uint32]bool)
+	if parsed.IsFragmented() {
+		for _, segment := range parsed.Segments {
+			for _, fragment := range segment.Fragments {
+				if fragment.Moof == nil || fragment.Mdat == nil {
+					return false
+				}
+				if fragment.Mdat.GetLazyDataSize() == 0 {
+					continue
+				}
+				for _, track := range fragment.Moof.Trafs {
+					if track.Tfhd == nil {
+						return false
+					}
+					trackID := track.Tfhd.TrackID
+					if fragmentTracks[trackID] {
+						continue
+					}
+					var trex *mp4.TrexBox
+					if parsed.Moov.Mvex != nil {
+						trex, _ = parsed.Moov.Mvex.GetTrex(trackID)
+					}
+					for _, run := range track.Truns {
+						if trunHasSampleData(run, track.Tfhd, trex) {
+							fragmentTracks[trackID] = true
+							break
+						}
+					}
+				}
+			}
+		}
+	} else if parsed.Mdat == nil || parsed.Mdat.GetLazyDataSize() == 0 {
+		return false
+	}
+
 	var video, audio bool
 	for _, track := range parsed.Moov.Traks {
-		if track.Mdia == nil || track.Mdia.Hdlr == nil {
+		if track.Tkhd == nil || track.Mdia == nil || track.Mdia.Hdlr == nil {
 			continue
+		}
+		if parsed.IsFragmented() {
+			if !fragmentTracks[track.Tkhd.TrackID] {
+				continue
+			}
+		} else {
+			minf := track.Mdia.Minf
+			if minf == nil || minf.Stbl == nil || minf.Stbl.Stsz == nil {
+				continue
+			}
+			sizes := minf.Stbl.Stsz
+			if sizes.GetNrSamples() == 0 || (sizes.SampleUniformSize == 0 && !slices.ContainsFunc(sizes.SampleSize, func(size uint32) bool { return size > 0 })) {
+				continue
+			}
 		}
 		switch track.Mdia.Hdlr.HandlerType {
 		case "vide":
@@ -309,6 +365,20 @@ func muxHasBothTracks(path string) bool {
 		}
 	}
 	return video && audio
+}
+
+// A size of zero is authoritative when the trun or tfhd explicitly sets it.
+func trunHasSampleData(run *mp4.TrunBox, tfhd *mp4.TfhdBox, trex *mp4.TrexBox) bool {
+	if run.SampleCount() == 0 {
+		return false
+	}
+	if run.HasSampleSize() {
+		return slices.ContainsFunc(run.Samples, func(sample mp4.Sample) bool { return sample.Size > 0 })
+	}
+	if tfhd.HasDefaultSampleSize() {
+		return tfhd.DefaultSampleSize > 0
+	}
+	return trex != nil && trex.DefaultSampleSize > 0
 }
 
 // FinalizeMux merges a sidecar pair, and discards the sidecars only once the
@@ -323,23 +393,40 @@ func (ch *Channel) FinalizeMux(videoPath, audioPath, outputPath string, videoInf
 	}
 	defer inFlightMux.Delete(claimPath)
 
-	if err := ch.MuxAV(videoPath, audioPath, outputPath); err != nil {
+	// Stage on the recording filesystem so the final name only becomes
+	// visible after the muxer finishes and validation succeeds.
+	workDir, err := os.MkdirTemp(filepath.Dir(outputPath), ".mux-*")
+	if err != nil {
+		return fmt.Errorf("create mux staging directory: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+	stagedPath := filepath.Join(workDir, "merged.mp4")
+	if err := ch.MuxAV(videoPath, audioPath, stagedPath); err != nil {
 		ch.Info("mux: ffmpeg mux failed, trying native fallback: %s", err.Error())
-		if nativeErr := ch.MuxAVNative(videoPath, audioPath, outputPath); nativeErr != nil {
-			// A half-written output would otherwise look like a finished merge
-			// and stop Remux from ever retrying this pair.
-			_ = os.Remove(outputPath)
+		if nativeErr := ch.MuxAVNative(videoPath, audioPath, stagedPath); nativeErr != nil {
 			ch.Error("mux: keeping %s and %s; use Remux to retry the merge", filepath.Base(videoPath), filepath.Base(audioPath))
 			return fmt.Errorf("mux audio/video: %w", nativeErr)
 		}
 	}
 
-	// An implausibly small output means the muxer bailed out early, and the
-	// sidecars are worth more than the corrupt result.
-	if ok, reason := muxOutputLooksValid(outputPath, videoInfo, audioInfo); !ok {
+	ok, reason := muxOutputLooksValid(stagedPath, videoInfo, audioInfo)
+	if ok && !muxHasBothTracks(stagedPath) {
+		ok, reason = false, "invalid MP4 or missing video/audio samples"
+	}
+	if !ok {
 		ch.Error("mux: output looks corrupt (%s); keeping sidecars %s and %s", reason, filepath.Base(videoPath), filepath.Base(audioPath))
-		_ = os.Remove(outputPath)
 		return ErrMuxRejected
+	}
+
+	stagedFile, err := os.OpenFile(stagedPath, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open staged mux output: %w", err)
+	}
+	if err := errors.Join(stagedFile.Sync(), stagedFile.Close()); err != nil {
+		return fmt.Errorf("flush staged mux output: %w", err)
+	}
+	if err := os.Rename(stagedPath, outputPath); err != nil {
+		return fmt.Errorf("publish mux output: %w", err)
 	}
 
 	// A sequential stat of all suffixes must not straddle the transition from
