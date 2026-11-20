@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -316,9 +317,18 @@ func muxHasBothTracks(path string) (valid bool) {
 					if track.Tfhd == nil {
 						return false
 					}
+					trackID := track.Tfhd.TrackID
+					if fragmentTracks[trackID] {
+						continue
+					}
+					var trex *mp4.TrexBox
+					if parsed.Moov.Mvex != nil {
+						trex, _ = parsed.Moov.Mvex.GetTrex(trackID)
+					}
 					for _, run := range track.Truns {
-						if run.SampleCount() != 0 {
-							fragmentTracks[track.Tfhd.TrackID] = true
+						if trunHasSampleData(run, track.Tfhd, trex) {
+							fragmentTracks[trackID] = true
+							break
 						}
 					}
 				}
@@ -339,7 +349,11 @@ func muxHasBothTracks(path string) (valid bool) {
 			}
 		} else {
 			minf := track.Mdia.Minf
-			if minf == nil || minf.Stbl == nil || minf.Stbl.Stsz == nil || minf.Stbl.Stsz.GetNrSamples() == 0 {
+			if minf == nil || minf.Stbl == nil || minf.Stbl.Stsz == nil {
+				continue
+			}
+			sizes := minf.Stbl.Stsz
+			if sizes.GetNrSamples() == 0 || (sizes.SampleUniformSize == 0 && !slices.ContainsFunc(sizes.SampleSize, func(size uint32) bool { return size > 0 })) {
 				continue
 			}
 		}
@@ -351,6 +365,20 @@ func muxHasBothTracks(path string) (valid bool) {
 		}
 	}
 	return video && audio
+}
+
+// A size of zero is authoritative when the trun or tfhd explicitly sets it.
+func trunHasSampleData(run *mp4.TrunBox, tfhd *mp4.TfhdBox, trex *mp4.TrexBox) bool {
+	if run.SampleCount() == 0 {
+		return false
+	}
+	if run.HasSampleSize() {
+		return slices.ContainsFunc(run.Samples, func(sample mp4.Sample) bool { return sample.Size > 0 })
+	}
+	if tfhd.HasDefaultSampleSize() {
+		return tfhd.DefaultSampleSize > 0
+	}
+	return trex != nil && trex.DefaultSampleSize > 0
 }
 
 // FinalizeMux merges a sidecar pair, and discards the sidecars only once the

@@ -718,6 +718,96 @@ func TestMuxHasBothTracksRejectsTruncatedOrSingleTrackOutput(t *testing.T) {
 	}
 }
 
+func TestMuxHasBothTracksChecksFragmentSampleSizes(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		explicitSize bool
+		tfhdPresent  bool
+		tfhdSize     uint32
+		want         bool
+	}{
+		{name: "explicit zero overrides defaults", explicitSize: true, tfhdPresent: true, tfhdSize: 2},
+		{name: "zero tfhd overrides trex", tfhdPresent: true},
+		{name: "inherits tfhd size", tfhdPresent: true, tfhdSize: 2, want: true},
+		{name: "inherits trex size", want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := mp4.DecodeFile(bytes.NewReader(combinedMP4(t)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			trex, _ := parsed.Moov.Mvex.GetTrex(audioTrackID)
+			trex.DefaultSampleSize = 2
+			fragment := parsed.Segments[0].Fragments[0]
+			audio := fragment.Moof.Trafs[1]
+			if tt.tfhdPresent {
+				audio.Tfhd.Flags |= mp4.TfhdDefaultSampleSizePresentFlag
+				audio.Tfhd.DefaultSampleSize = tt.tfhdSize
+			}
+			if !tt.explicitSize {
+				audio.Trun.Flags &^= mp4.TrunSampleSizePresentFlag
+			}
+			if !tt.want {
+				audio.Trun.Samples[0].Size = 0
+				fragment.Mdat.SetData(fragment.Mdat.Data[:3]) // Keep only video bytes.
+			}
+			var data bytes.Buffer
+			if err := parsed.Encode(&data); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "output.mp4")
+			writeSidecar(t, path, data.Bytes())
+			if got := muxHasBothTracks(path); got != tt.want {
+				t.Errorf("muxHasBothTracks() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMuxHasBothTracksChecksProgressiveSampleSizes(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		variableSizes []uint32
+		uniformSize   uint32
+		want          bool
+	}{
+		{name: "zero audio", variableSizes: []uint32{0}},
+		{name: "positive audio", variableSizes: []uint32{2}, want: true},
+		{name: "uniform audio", uniformSize: 2, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			init := mp4.CreateEmptyInit()
+			video := init.AddEmptyTrack(90000, "video", "und").Mdia.Minf.Stbl
+			audio := init.AddEmptyTrack(44100, "audio", "und").Mdia.Minf.Stbl
+			for _, table := range []*mp4.StblBox{video, audio} {
+				table.Stts.SampleCount = []uint32{1}
+				table.Stts.SampleTimeDelta = []uint32{1}
+				table.Stsz.SampleNumber = 1
+			}
+			video.Stsz.SampleUniformSize = 3
+			audio.Stsz.SampleUniformSize = tt.uniformSize
+			audio.Stsz.SampleSize = tt.variableSizes
+			var data bytes.Buffer
+			if err := init.Encode(&data); err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte{1, 2, 3}
+			if tt.want {
+				payload = append(payload, 4, 5)
+			}
+			mdat := &mp4.MdatBox{Data: payload}
+			if err := mdat.Encode(&data); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "output.mp4")
+			writeSidecar(t, path, data.Bytes())
+			if got := muxHasBothTracks(path); got != tt.want {
+				t.Errorf("muxHasBothTracks() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPatternRoot(t *testing.T) {
 	t.Parallel()
 
